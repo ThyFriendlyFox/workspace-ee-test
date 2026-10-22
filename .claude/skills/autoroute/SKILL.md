@@ -30,7 +30,7 @@ in through KiCad. See steps 1 and 5.
    `<project>/<name>.dsn`. In a cloud session without a display, ask the
    human for that file and pass its path with `--dsn`. Tracking item:
    DSN export and session import through the IPC API on
-   `agent-kit/ROADMAP.md`.
+   `ee-agent-kit/ROADMAP.md`.
 2. Run `workcenter drc <project>`. Fix every error that is not an
    unconnected item. The router cannot fix clearance or courtyard
    violations in placement.

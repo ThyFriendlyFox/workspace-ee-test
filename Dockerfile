@@ -3,7 +3,7 @@
 # Run:    docker run --rm -v "$PWD/board:/work" ee-workcenter workcenter gates /work
 #
 # Not built in the cloud session that authored it (no Docker daemon there);
-# release.yml builds and smoke-tests it on every tag. See agent-kit/CI.md.
+# release.yml builds and smoke-tests it on every tag. See ee-agent-kit/CI.md.
 FROM kicad/kicad:10.0
 
 USER root

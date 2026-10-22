@@ -11,9 +11,9 @@
    must stop at DRC with a `clearance` violation, `fail-sim-spec` must
    fail its `vout` bound. KiCad-dependent tests skip loudly without
    `kicad-cli`; step 2 already failed in that case.
-4. Kit checks — no unfilled placeholder outside `agent-kit/SETUP.md`;
+4. Kit checks — no unfilled placeholder outside `ee-agent-kit/SETUP.md`;
    every `SKILL.md` has frontmatter with `name` and `description`;
-   `agent-kit/skills/*` and `.claude/skills/*` are identical;
+   `ee-agent-kit/skills/*` and `.claude/skills/*` are identical;
    `WORKCENTER.md` exists at the root.
 
 ## Rules

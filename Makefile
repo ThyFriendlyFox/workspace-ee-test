@@ -1,4 +1,4 @@
-# EE Workcenter — canonical commands. agent-kit/AGENTS.md names these.
+# EE Workcenter — canonical commands. ee-agent-kit/AGENTS.md names these.
 VENV_PY := /opt/workcenters/ee/venv/bin/python
 PY := $(shell test -x $(VENV_PY) && echo $(VENV_PY) || echo python3)
 

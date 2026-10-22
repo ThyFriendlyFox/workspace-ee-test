@@ -27,18 +27,18 @@ step "3/4 tests"
 step "4/4 kit checks"
 # Kit placeholders may remain only in SETUP.md, whose table documents them.
 if grep -rnE '\{\{(PROJECT_NAME|REPO_SLUG|DEFAULT_BRANCH|BUILD_CMD|TEST_CMD|LINT_CMD|VERIFY_CMD|MIN_RUNTIME|SECURITY_EMAIL|PKG_ECOSYSTEM)\}\}' \
-     agent-kit docs 2>/dev/null | grep -v '^agent-kit/SETUP.md:'; then
+     ee-agent-kit docs 2>/dev/null | grep -v '^ee-agent-kit/SETUP.md:'; then
   echo "unfilled kit placeholders found"; exit 1
 fi
-for skill in .claude/skills/*/SKILL.md agent-kit/skills/*/SKILL.md; do
+for skill in .claude/skills/*/SKILL.md ee-agent-kit/skills/*/SKILL.md; do
   head -1 "$skill" | grep -q '^---$' || { echo "$skill: missing frontmatter"; exit 1; }
   grep -q '^name:' "$skill" || { echo "$skill: missing name"; exit 1; }
   grep -q '^description:' "$skill" || { echo "$skill: missing description"; exit 1; }
 done
-for kit_skill in agent-kit/skills/*/; do
+for kit_skill in ee-agent-kit/skills/*/; do
   name=$(basename "$kit_skill")
   diff -q "$kit_skill/SKILL.md" ".claude/skills/$name/SKILL.md" >/dev/null \
-    || { echo "agent-kit/skills/$name drifted from .claude/skills/$name"; exit 1; }
+    || { echo "ee-agent-kit/skills/$name drifted from .claude/skills/$name"; exit 1; }
 done
 [[ -f WORKCENTER.md ]] || { echo "WORKCENTER.md missing at repo root"; exit 1; }
 echo "kit checks ok"

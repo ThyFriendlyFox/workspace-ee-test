@@ -12,7 +12,7 @@ prompt, with all intelligence living in the kit files (this is the
 pattern that works; do not fatten the prompt):
 
 ```
-Ship the top ready item in agent-kit/ROADMAP.md: <feature name>.
+Ship the top ready item in ee-agent-kit/ROADMAP.md: <feature name>.
 The loop ends when its completion promise is true with the named
 evidence. Obey AGENTS.md; verify per VERIFICATION.md and commit at
 each boundary.

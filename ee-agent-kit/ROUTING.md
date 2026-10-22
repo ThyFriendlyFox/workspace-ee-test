@@ -1,6 +1,6 @@
 # ROUTING.md — read this first
 
-You are an AI agent pointed at this repository. This folder (`agent-kit/`)
+You are an AI agent pointed at this repository. This folder (`ee-agent-kit/`)
 is the operating system for working on it. This file tells you which file
 governs which situation. Do not improvise a process that a file below
 already defines.

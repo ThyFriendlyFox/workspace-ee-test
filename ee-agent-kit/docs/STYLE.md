@@ -33,7 +33,7 @@ the report path.
 
 | Use | Do not use |
 |---|---|
-| workcenter | toolbox, kit (the kit is `agent-kit/`), environment (the cloud VM) |
+| workcenter | toolbox, kit (the kit is `ee-agent-kit/`), environment (the cloud VM) |
 | project | board repo, target, design folder |
 | gate | check (that is `doctor`), test (those are in `tests/`), validation |
 | engine | tool, backend, adapter, provider |

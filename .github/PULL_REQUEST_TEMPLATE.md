@@ -1,7 +1,7 @@
 ## What
 
 ## Why
-<!-- Fixes #NN / agent-kit/ROADMAP.md item: <name> -->
+<!-- Fixes #NN / ee-agent-kit/ROADMAP.md item: <name> -->
 
 ## Evidence
 <!-- `make verify` output lines, gate summaries, fixture results -->

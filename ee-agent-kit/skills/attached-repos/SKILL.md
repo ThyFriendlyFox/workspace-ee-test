@@ -31,8 +31,9 @@ before the first edit.
 3. `WORKCENTER.md` at a repository root. Its presence marks a
    workcenter. Its contents list the tools, skills, gates, and paths the
    workcenter provides.
-4. `agent-kit/ROUTING.md` at a repository root. Its presence marks a
-   project governed by this kit.
+4. A `ROUTING.md` inside a directory whose name ends in `agent-kit`
+   (`agent-kit/`, `ee-agent-kit/`) at a repository root. Its presence
+   marks a project governed by this kit.
 
 ## Steps
 
@@ -45,8 +46,7 @@ before the first edit.
    - `project`: every other repository. If more than 1 repository is a
      project, the task names the target. If the task does not, ask
      before the first edit.
-3. Read, in this order: the project's `agent-kit/ROUTING.md` when
-   present, then the project's `AGENTS.md` or `CLAUDE.md`, then each
+3. Read, in this order: the project's kit `ROUTING.md` when present, then the project's `AGENTS.md` or `CLAUDE.md`, then each
    workcenter's `WORKCENTER.md`. The workcenter's skills are already
    loaded; `WORKCENTER.md` says which skill fits which step.
 4. Apply the rules below for the rest of the session.

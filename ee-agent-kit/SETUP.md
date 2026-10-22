@@ -1,7 +1,7 @@
 # SETUP.md — one-time installation into a repo
 
 Run this once, when this kit lands in a repo and placeholders still exist.
-When finished, no `{{PLACEHOLDER}}` remains anywhere in `agent-kit/`.
+When finished, no `{{PLACEHOLDER}}` remains anywhere in `ee-agent-kit/`.
 
 ## 1. Survey the repo
 
@@ -69,5 +69,5 @@ Populate `docs/` from the repo itself:
 
 ## 6. Commit
 
-One commit on a branch: `chore: install agent-kit`. Push. From now on,
+One commit on a branch: `chore: install ee-agent-kit`. Push. From now on,
 `ROUTING.md` governs.
