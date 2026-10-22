@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/tools/workcenter doctor 2>&1 || true",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

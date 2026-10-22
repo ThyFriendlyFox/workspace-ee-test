@@ -1,0 +1,11 @@
+* RC divider fixture: 5 V through 10k into 10k to ground. Expect vout = 2.5 V.
+V1 in 0 DC 5
+R1 in out 10k
+R2 out 0 10k
+C1 out 0 100n
+.control
+op
+let vout = v(out)
+print vout
+.endc
+.end

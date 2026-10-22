@@ -1,0 +1,563 @@
+#!/usr/bin/env python3
+"""workcenter — the EE Workcenter command line.
+
+Runs the engines (KiCad 10 kicad-cli, ngspice, FreeRouting) against a
+KiCad project and reports pass or fail per gate. Standard library only,
+Python 3.12 or later.
+
+Exit codes: 0 every gate passed, 1 a gate failed or an engine errored,
+2 a gate skipped because an engine or input is missing.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+WC_ROOT = Path(os.environ.get("WORKCENTER_ROOT", "/opt/workcenters/ee"))
+SRC_DIR = Path(__file__).resolve().parent.parent
+FREEROUTING_JAR = Path(os.environ.get("FREEROUTING_JAR", WC_ROOT / "freerouting" / "freerouting.jar"))
+KICAD_CLI = os.environ.get("KICAD_CLI", "kicad-cli")
+NGSPICE = os.environ.get("NGSPICE", "ngspice")
+JAVA = os.environ.get("JAVA", "java")
+
+EXIT_PASS, EXIT_FAIL, EXIT_SKIP = 0, 1, 2
+GATE_ORDER = ("erc", "drc", "sim", "export")
+
+
+@dataclass
+class Result:
+    gate: str
+    status: str  # pass | fail | skip | error
+    summary: str
+    details: dict = field(default_factory=dict)
+    artifacts: list[str] = field(default_factory=list)
+    seconds: float = 0.0
+
+    @property
+    def exit_code(self) -> int:
+        return {"pass": EXIT_PASS, "skip": EXIT_SKIP}.get(self.status, EXIT_FAIL)
+
+
+@dataclass
+class Project:
+    dir: Path
+    name: str
+    pro: Path | None
+    sch: Path | None
+    pcb: Path | None
+
+
+# ---------------------------------------------------------------- helpers
+
+
+def run(cmd: list[str], cwd: Path | None = None, timeout: int = 900) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(c) for c in cmd],
+        cwd=str(cwd) if cwd else None,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def tool_version(cmd: list[str], pattern: str = r"\d+(\.\d+)+") -> str | None:
+    exe = shutil.which(cmd[0])
+    if not exe:
+        return None
+    try:
+        proc = run(cmd, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    text = (proc.stdout or "") + (proc.stderr or "")
+    match = re.search(pattern, text)
+    return match.group(0) if match else (text.strip().splitlines() or ["?"])[0]
+
+
+def find_project(path: str) -> Project:
+    p = Path(path).resolve()
+    if p.is_file():
+        stem_dir, stem = p.parent, p.stem
+    elif p.is_dir():
+        pros = sorted(p.glob("*.kicad_pro"))
+        if len(pros) > 1:
+            raise SystemExit(f"{p}: {len(pros)} .kicad_pro files; name one")
+        if pros:
+            stem_dir, stem = p, pros[0].stem
+        else:
+            schs = sorted(p.glob("*.kicad_sch"))
+            pcbs = sorted(p.glob("*.kicad_pcb"))
+            cand = schs or pcbs
+            if cand:
+                stem_dir, stem = p, cand[0].stem
+            elif (p / "sim").is_dir():
+                stem_dir, stem = p, p.name  # simulation-only project: decks, no board yet
+            else:
+                raise SystemExit(f"{p}: no KiCad project, schematic, board or sim/ directory found")
+    else:
+        raise SystemExit(f"{p}: not found")
+
+    def opt(suffix: str) -> Path | None:
+        f = stem_dir / f"{stem}{suffix}"
+        return f if f.is_file() else None
+
+    return Project(
+        dir=stem_dir, name=stem, pro=opt(".kicad_pro"), sch=opt(".kicad_sch"), pcb=opt(".kicad_pcb")
+    )
+
+
+def out_dir_for(project: Project, override: str | None) -> Path:
+    out = Path(override).resolve() if override else project.dir / "build"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def load_json(path: Path) -> dict:
+    with path.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def count_severity(items: list[dict]) -> dict[str, int]:
+    counts = {"error": 0, "warning": 0, "other": 0}
+    for item in items:
+        sev = str(item.get("severity", "other")).lower()
+        counts[sev if sev in counts else "other"] += 1
+    return counts
+
+
+def first_violations(items: list[dict], limit: int = 10) -> list[dict]:
+    out = []
+    for v in items[:limit]:
+        pos = None
+        for it in v.get("items", []):
+            if "pos" in it:
+                pos = it["pos"]
+                break
+        out.append(
+            {
+                "type": v.get("type"),
+                "severity": v.get("severity"),
+                "description": v.get("description"),
+                "pos": pos,
+            }
+        )
+    return out
+
+
+def timed(fn):
+    def wrapper(*args, **kwargs) -> Result:
+        t0 = time.monotonic()
+        try:
+            result = fn(*args, **kwargs)
+        except FileNotFoundError as exc:
+            result = Result(fn.__name__.removeprefix("gate_"), "skip", f"engine missing: {exc.filename}")
+        except subprocess.TimeoutExpired as exc:
+            result = Result(fn.__name__.removeprefix("gate_"), "error", f"timed out after {exc.timeout}s")
+        result.seconds = round(time.monotonic() - t0, 2)
+        return result
+
+    return wrapper
+
+
+# ------------------------------------------------------------------ gates
+
+
+@timed
+def gate_erc(project: Project, out: Path, strict: bool = False) -> Result:
+    if not project.sch:
+        return Result("erc", "skip", "no schematic in project")
+    report = out / "erc.json"
+    proc = run(
+        [
+            KICAD_CLI,
+            "sch",
+            "erc",
+            "--output",
+            report,
+            "--format",
+            "json",
+            "--severity-all",
+            "--exit-code-violations",
+            project.sch,
+        ],
+        cwd=project.dir,
+    )
+    if proc.returncode not in (0, 5) or not report.is_file():
+        return Result("erc", "error", f"kicad-cli exited {proc.returncode}", {"stderr": proc.stderr[-2000:]})
+    data = load_json(report)
+    violations = [v for sheet in data.get("sheets", []) for v in sheet.get("violations", [])]
+    counts = count_severity(violations)
+    red = counts["error"] > 0 or (strict and counts["warning"] > 0)
+    return Result(
+        "erc",
+        "fail" if red else "pass",
+        f"{counts['error']} errors, {counts['warning']} warnings",
+        {"counts": counts, "first": first_violations(violations)},
+        [str(report)],
+    )
+
+
+@timed
+def gate_drc(project: Project, out: Path, strict: bool = False) -> Result:
+    if not project.pcb:
+        return Result("drc", "skip", "no board in project")
+    report = out / "drc.json"
+    cmd = [
+        KICAD_CLI,
+        "pcb",
+        "drc",
+        "--output",
+        report,
+        "--format",
+        "json",
+        "--severity-all",
+        "--exit-code-violations",
+    ]
+    if project.sch:
+        cmd.append("--schematic-parity")
+    cmd.append(project.pcb)
+    proc = run(cmd, cwd=project.dir)
+    if proc.returncode not in (0, 5) or not report.is_file():
+        return Result("drc", "error", f"kicad-cli exited {proc.returncode}", {"stderr": proc.stderr[-2000:]})
+    data = load_json(report)
+    groups = {k: data.get(k, []) for k in ("violations", "unconnected_items", "schematic_parity")}
+    counts = {k: count_severity(v) for k, v in groups.items()}
+    errors = sum(c["error"] for c in counts.values())
+    warnings = sum(c["warning"] for c in counts.values())
+    red = errors > 0 or (strict and warnings > 0)
+    return Result(
+        "drc",
+        "fail" if red else "pass",
+        f"{errors} errors, {warnings} warnings "
+        f"({len(groups['unconnected_items'])} unconnected, {len(groups['schematic_parity'])} parity)",
+        {
+            "counts": counts,
+            "first": first_violations(
+                groups["violations"] + groups["unconnected_items"] + groups["schematic_parity"]
+            ),
+        },
+        [str(report)],
+    )
+
+
+MEASURE_RE = re.compile(r"^\s*([A-Za-z_][\w]*)\s*=\s*([-+]?[\d.]+(?:[eE][-+]?\d+)?)")
+NGSPICE_ERROR_RE = re.compile(r"^(Error|.*\berror on line\b|Fatal|.*: no such)", re.IGNORECASE)
+
+
+@timed
+def gate_sim(project: Project, out: Path, strict: bool = False) -> Result:
+    sim_dir = project.dir / "sim"
+    decks = sorted(sim_dir.glob("*.cir")) if sim_dir.is_dir() else []
+    if not decks:
+        return Result("sim", "skip", "no sim/*.cir in project")
+    if not shutil.which(NGSPICE):
+        return Result("sim", "skip", f"engine missing: {NGSPICE}")
+    sim_out = out / "sim"
+    sim_out.mkdir(parents=True, exist_ok=True)
+    details, artifacts, failures = {}, [], []
+    for deck in decks:
+        log = sim_out / f"{deck.stem}.log"
+        proc = run([NGSPICE, "-b", "-o", log, deck.name], cwd=sim_dir)
+        text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+        text += "\n" + (proc.stdout or "") + (proc.stderr or "")
+        errors = [ln.strip() for ln in text.splitlines() if NGSPICE_ERROR_RE.match(ln)]
+        measures = {}
+        for ln in text.splitlines():
+            m = MEASURE_RE.match(ln)
+            if m:
+                measures[m.group(1)] = float(m.group(2))
+        expect_file = sim_dir / f"{deck.stem}.expect.json"
+        checks = {}
+        if expect_file.is_file():
+            for name, bounds in load_json(expect_file).items():
+                value = measures.get(name)
+                ok = value is not None and bounds.get("min", float("-inf")) <= value <= bounds.get(
+                    "max", float("inf")
+                )
+                checks[name] = {"value": value, "min": bounds.get("min"), "max": bounds.get("max"), "ok": ok}
+                if not ok:
+                    failures.append(
+                        f"{deck.stem}:{name}={value} not in [{bounds.get('min')}, {bounds.get('max')}]"
+                    )
+        if proc.returncode != 0 or errors:
+            failures.append(f"{deck.stem}: ngspice exit {proc.returncode}, {len(errors)} error lines")
+        details[deck.stem] = {
+            "exit": proc.returncode,
+            "errors": errors[:10],
+            "measures": measures,
+            "checks": checks,
+        }
+        artifacts.append(str(log))
+    return Result(
+        "sim",
+        "fail" if failures else "pass",
+        f"{len(decks)} decks, {len(failures)} failures",
+        {"decks": details, "failures": failures},
+        artifacts,
+    )
+
+
+@timed
+def gate_export(project: Project, out: Path, strict: bool = False, step: bool = False) -> Result:
+    if not project.pcb:
+        return Result("export", "skip", "no board in project")
+    fab = out / "fab"
+    fab.mkdir(parents=True, exist_ok=True)
+    gerbers = fab / "gerbers"
+    gerbers.mkdir(exist_ok=True)
+    jobs: list[tuple[str, list[str], Path]] = [
+        ("gerbers", [KICAD_CLI, "pcb", "export", "gerbers", "--output", f"{gerbers}/", project.pcb], gerbers),
+        ("drill", [KICAD_CLI, "pcb", "export", "drill", "--output", f"{gerbers}/", project.pcb], gerbers),
+    ]
+    if project.sch:
+        jobs.append(
+            (
+                "bom",
+                [KICAD_CLI, "sch", "export", "bom", "--output", fab / "bom.csv", project.sch],
+                fab / "bom.csv",
+            )
+        )
+        jobs.append(
+            (
+                "schematic-pdf",
+                [KICAD_CLI, "sch", "export", "pdf", "--output", fab / "schematic.pdf", project.sch],
+                fab / "schematic.pdf",
+            )
+        )
+    if step:
+        jobs.append(
+            (
+                "step",
+                [KICAD_CLI, "pcb", "export", "step", "--output", fab / f"{project.name}.step", project.pcb],
+                fab / f"{project.name}.step",
+            )
+        )
+    details, artifacts, failures = {}, [], []
+    for name, cmd, expect in jobs:
+        proc = run(cmd, cwd=project.dir)
+        produced = expect.is_file() if expect.suffix else any(expect.iterdir())
+        ok = proc.returncode == 0 and produced
+        details[name] = {
+            "exit": proc.returncode,
+            "produced": produced,
+            "stderr": proc.stderr[-800:] if not ok else "",
+        }
+        if ok:
+            artifacts.append(str(expect))
+        else:
+            failures.append(name)
+    gerber_files = sorted(p.name for p in gerbers.iterdir()) if gerbers.is_dir() else []
+    details["gerber_files"] = gerber_files
+    return Result(
+        "export",
+        "fail" if failures else "pass",
+        f"{len(jobs) - len(failures)}/{len(jobs)} outputs, {len(gerber_files)} gerber files",
+        details,
+        artifacts,
+    )
+
+
+@timed
+def gate_autoroute(
+    project: Project,
+    out: Path,
+    dsn: str | None = None,
+    passes: int = 20,
+    threads: int = 0,
+    timeout: int = 600,
+) -> Result:
+    if not project.pcb:
+        return Result("autoroute", "skip", "no board in project")
+    if not FREEROUTING_JAR.is_file():
+        return Result("autoroute", "skip", f"engine missing: {FREEROUTING_JAR}")
+    if not shutil.which(JAVA):
+        return Result("autoroute", "skip", f"engine missing: {JAVA}")
+    # kicad-cli 10 has no Specctra export. The DSN comes from KiCad
+    # (File > Export > Specctra DSN) next to the board, or from --dsn.
+    candidates = (
+        [Path(dsn)] if dsn else [project.dir / f"{project.name}.dsn", out / "route" / f"{project.name}.dsn"]
+    )
+    dsn_path = next((c for c in candidates if c.is_file()), None)
+    if dsn_path is None:
+        return Result(
+            "autoroute",
+            "skip",
+            "no Specctra DSN: kicad-cli 10 cannot export one; export it from KiCad or pass --dsn",
+            {"looked_for": [str(c) for c in candidates]},
+        )
+    route = out / "route"
+    route.mkdir(parents=True, exist_ok=True)
+    ses = route / f"{project.name}.ses"
+    cmd = [JAVA, "-jar", FREEROUTING_JAR, "-de", dsn_path, "-do", ses, "-mp", str(passes)]
+    if threads:
+        cmd += ["-mt", str(threads)]
+    proc = run(cmd, cwd=route, timeout=timeout)
+    if proc.returncode != 0 or not ses.is_file():
+        return Result(
+            "autoroute",
+            "fail",
+            f"FreeRouting exited {proc.returncode}",
+            {"stderr": (proc.stderr or proc.stdout)[-1500:]},
+        )
+    return Result(
+        "autoroute",
+        "pass",
+        f"session file written: {ses.name}",
+        {
+            "note": "import the .ses into the board with KiCad (File > Import > Specctra Session), "
+            "then run drc"
+        },
+        [str(dsn_path), str(ses)],
+    )
+
+
+# --------------------------------------------------------------- commands
+
+
+def cmd_doctor(args) -> int:
+    kicad = tool_version([KICAD_CLI, "version"])
+    ngspice = tool_version([NGSPICE, "--version"], r"(?<=ngspice-)\d+")
+    java = tool_version([JAVA, "-version"], r'(?<=version ")\d+(\.\d+)*')
+    py = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    checks = {
+        "kicad-cli": {"required": True, "ok": bool(kicad and kicad.startswith("10.")), "version": kicad},
+        "ngspice": {"required": True, "ok": bool(ngspice), "version": ngspice},
+        "python": {"required": True, "ok": sys.version_info >= (3, 12), "version": py},
+        "java": {"required": False, "ok": bool(java and int(java.split(".")[0]) >= 21), "version": java},
+        "freerouting": {"required": False, "ok": FREEROUTING_JAR.is_file(), "path": str(FREEROUTING_JAR)},
+        "venv": {
+            "required": False,
+            "ok": (WC_ROOT / "venv" / "bin" / "python").exists(),
+            "path": str(WC_ROOT / "venv"),
+        },
+        "xvfb": {"required": False, "ok": shutil.which("Xvfb") is not None},
+        "manifest": {
+            "required": True,
+            "ok": (SRC_DIR / "WORKCENTER.md").is_file(),
+            "path": str(SRC_DIR / "WORKCENTER.md"),
+        },
+    }
+    missing_required = [k for k, v in checks.items() if v["required"] and not v["ok"]]
+    degraded = [k for k, v in checks.items() if not v["required"] and not v["ok"]]
+    status = "fail" if missing_required else ("degraded" if degraded else "ok")
+    payload = {
+        "status": status,
+        "root": str(WC_ROOT),
+        "src": str(SRC_DIR),
+        "checks": checks,
+        "missing_required": missing_required,
+        "degraded": degraded,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"workcenter ee: {status}  (root {WC_ROOT}, src {SRC_DIR})")
+        for name, c in checks.items():
+            mark = "ok " if c["ok"] else ("MISSING" if c["required"] else "absent ")
+            extra = c.get("version") or c.get("path") or ""
+            print(f"  {mark:8} {name:12} {extra}")
+    return EXIT_FAIL if missing_required else EXIT_PASS
+
+
+def emit(results: list[Result], args, out: Path | None = None) -> int:
+    statuses = {r.status for r in results}
+    if statuses & {"fail", "error"}:
+        worst = EXIT_FAIL
+    elif "skip" in statuses and "pass" not in statuses:
+        worst = EXIT_SKIP
+    else:
+        worst = EXIT_PASS
+    if out is not None:
+        (out / "gates.json").write_text(json.dumps([asdict(r) for r in results], indent=2), encoding="utf-8")
+    if args.json:
+        print(json.dumps([asdict(r) for r in results], indent=2))
+    else:
+        for r in results:
+            print(f"{r.status.upper():6} {r.gate:10} {r.summary}  [{r.seconds}s]")
+            for v in r.details.get("first", [])[:5]:
+                print(f"       - {v.get('severity')}: {v.get('type')}: {v.get('description')}")
+            for f in r.details.get("failures", [])[:5]:
+                print(f"       - {f}")
+    return worst
+
+
+def cmd_gate(args, fn, **kwargs) -> int:
+    project = find_project(args.project)
+    out = out_dir_for(project, args.out)
+    return emit([fn(project, out, **kwargs)], args, out)
+
+
+def cmd_gates(args) -> int:
+    project = find_project(args.project)
+    out = out_dir_for(project, args.out)
+    results: list[Result] = []
+    for gate in GATE_ORDER:
+        fn = {"erc": gate_erc, "drc": gate_drc, "sim": gate_sim, "export": gate_export}[gate]
+        kwargs = {"strict": args.strict}
+        if gate == "export":
+            kwargs["step"] = args.step
+        result = fn(project, out, **kwargs)
+        results.append(result)
+        if result.status in ("fail", "error"):
+            break
+    code = emit(results, args, out)
+    if not args.json:
+        verdict = "GREEN" if code == EXIT_PASS else ("SKIPPED" if code == EXIT_SKIP else "RED")
+        print(f"{verdict}: {project.name}  report {out / 'gates.json'}")
+    return code
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="workcenter", description=__doc__.splitlines()[0])
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("doctor", help="report engine status")
+
+    def add_project_cmd(name: str, help_text: str):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("project", help="project directory or a .kicad_pro/.kicad_sch/.kicad_pcb file")
+        p.add_argument("--out", help="output directory (default <project>/build)")
+        p.add_argument("--strict", action="store_true", help="warnings fail the gate")
+        return p
+
+    add_project_cmd("erc", "electrical rules check on the schematic")
+    add_project_cmd("drc", "design rules check on the board, with schematic parity")
+    add_project_cmd("sim", "run ngspice on sim/*.cir and check *.expect.json bounds")
+    p = add_project_cmd("export", "fabrication outputs: gerbers, drill, BOM, schematic PDF")
+    p.add_argument("--step", action="store_true", help="also export a STEP model")
+    p = add_project_cmd("gates", "run erc, drc, sim, export in order; stop at the first red")
+    p.add_argument("--step", action="store_true", help="also export a STEP model")
+    p = add_project_cmd("autoroute", "run FreeRouting on the project's Specctra DSN, write a .ses")
+    p.add_argument("--dsn", help="Specctra DSN exported from KiCad (default <project>/<name>.dsn)")
+    p.add_argument("--passes", type=int, default=20)
+    p.add_argument("--threads", type=int, default=0)
+    p.add_argument("--timeout", type=int, default=600)
+
+    args = parser.parse_args(argv)
+    if args.command == "doctor":
+        return cmd_doctor(args)
+    if args.command == "gates":
+        return cmd_gates(args)
+    if args.command == "autoroute":
+        return cmd_gate(
+            args, gate_autoroute, dsn=args.dsn, passes=args.passes, threads=args.threads, timeout=args.timeout
+        )
+    fn = {"erc": gate_erc, "drc": gate_drc, "sim": gate_sim, "export": gate_export}[args.command]
+    kwargs = {"strict": args.strict}
+    if args.command == "export":
+        kwargs["step"] = args.step
+    return cmd_gate(args, fn, **kwargs)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
