@@ -1,6 +1,6 @@
 # EE Workcenter
 
-A workcenter is a pre-packaged environment an agent steps into to do 1
+A workcenter is a pre-packaged environment an agent steps into to do one
 kind of work well. This one does electronics: it turns a KiCad 10
 project into fabrication outputs that passed every gate.
 
