@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-include = ["tools/workcenter"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/boards/generate.py" = ["E501"]  # S-expression templates
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

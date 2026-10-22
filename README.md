@@ -47,11 +47,11 @@ base. `release.yml` publishes it to GHCR on every tag.
 | `.claude/skills/` | `attached-repos`, `board-gates`, `autoroute`, `simulate`, `blog-post`. |
 | `tests/boards/` | Fixture boards and what each proves. |
 | `environment/` | Cloud environment setup script and hosts. |
-| `agent-kit/` | How work on this repository is run. Start at `agent-kit/ROUTING.md`. |
+| `ee-agent-kit/` | How work on this repository is run. Start at `ee-agent-kit/ROUTING.md`. |
 
 ## Working on this repository
 
-`make verify` must be green before any push. `agent-kit/AGENTS.md` is
-binding; `agent-kit/ROADMAP.md` decides what gets built.
+`make verify` must be green before any push. `ee-agent-kit/AGENTS.md` is
+binding; `ee-agent-kit/ROADMAP.md` decides what gets built.
 
 MIT licensed. KiCad, ngspice, and FreeRouting keep their own licenses.

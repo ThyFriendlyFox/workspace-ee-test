@@ -1,0 +1,72 @@
+# ROADMAP.md — the source of all work
+
+**This file is not optional.** Every feature the agent builds flows down
+from here. If it isn't on this roadmap, it doesn't get built; if it needs
+building, it gets added here first. One item ships per weekly cycle
+(see `WEEKLY.md`).
+
+`provisional: true` — the queue below was seeded at setup by the agent.
+The human re-orders it.
+
+## North star
+
+EE Workcenter is the environment an agent steps into to take a KiCad
+project from schematic to fabrication outputs with every gate green,
+without a human running a tool by hand. Everything here serves that:
+the toolchain installs itself, the gates are the definition of done, and
+the skills tell the agent which gate comes next.
+
+## Feature Queue — ordered; top unblocked item ships next
+
+### 1. Headless autoroute round trip through the IPC API
+- **Promise:** `workcenter autoroute --apply <project>` exports the Specctra DSN itself, runs FreeRouting, writes the routed tracks from the session into the board file, and the new fixture `route-me` passes DRC with 0 unconnected items afterwards, with no KiCad GUI step.
+- **Evidence:** `tests/test_gates.py::test_autoroute_apply_routes_fixture` green in `make verify`; the fixture's DRC report attached to the PR.
+- **Use case:** Route a board (`docs/USE-CASES.md`).
+- **Scope guard:** No routing heuristics of our own. No GUI automation. kipy under Xvfb is in scope; a KiCad fork is not. `kicad-cli` 10 has no Specctra export, so the export goes through kipy or a DSN writer of our own.
+- **Status:** ready
+
+### 2. Board gates as a reusable GitHub workflow for board repositories
+- **Promise:** A board repository that adds 1 workflow calling `ThyFriendlyFox/workspace-ee-test/.github/workflows/board-gates.yml@main` gets `workcenter gates` run on every PR, with the gates table in the job summary and a red check on a red gate.
+- **Evidence:** A run link from a board repository, plus `tests/boards/pass-rc-divider` run through the workflow in this repository's CI.
+- **Use case:** Review a board PR.
+- **Scope guard:** No comments posted to the PR; the check and the summary are the output.
+- **Status:** ready
+
+### 3. Fabrication house rule sets
+- **Promise:** `workcenter drc --fab jlcpcb <project>` applies `rules/jlcpcb.kicad_dru` on top of the project's rules, and the new fixture `fail-fab-jlcpcb` is GREEN without the flag and red with it.
+- **Evidence:** `tests/test_gates.py::test_fab_rules_turn_fixture_red` green in `make verify`.
+- **Use case:** Export for a fab.
+- **Scope guard:** 1 fab in this item. The rule file format is KiCad's own `.kicad_dru`; no translation layer.
+- **Status:** ready
+
+### 4. MCP server for hosts that are not Claude Code
+- **Promise:** `workcenter mcp` serves `doctor`, `gates`, `erc`, `drc`, `sim`, `export`, and `autoroute` as MCP tools over stdio, and the MCP inspector lists all 7 with their schemas.
+- **Evidence:** An inspector screenshot and a test that drives the server with a scripted JSON-RPC session.
+- **Use case:** Build another workcenter from this one.
+- **Scope guard:** stdio only; no HTTP transport, no auth.
+- **Status:** ready
+
+## Later — candidates, not yet specced
+
+- SIM gate from the schematic — export the SPICE netlist automatically and apply a stimulus template, so a project without a hand-written deck still gets a simulation.
+- `workcenter new <name>` — scaffold a board project with the `.gitignore`, `sim/`, and a passing starter board.
+- Publish the workcenter as an account-level Claude Code plugin — skills and the MCP server arrive in every cloud session without touching board repositories.
+- BOM availability gate — every BOM line resolves to a stocked part at a distributor before export passes.
+- STEP export in the EXPORT gate by default once the fixture proves it runs headless in CI within the time budget.
+
+## Shipped
+
+| Week | Feature | Release | Evidence |
+|---|---|---|---|
+| 2026-10-22 | Install the kit; `install.sh`; gates ERC, DRC, SIM, EXPORT; fixture boards; skills | unreleased | `make verify` green at the install commit; `DEVLOG.md` 2026-10-22 |
+
+## Explicitly not doing
+
+- Reverse engineering KiCad with REA or similar — KiCad is open source with an official IPC API and CLI. REA belongs to workcenters built on closed tools.
+- GUI or screen automation of KiCad — every operation goes through `kicad-cli` or the IPC API.
+- Bundling a patched KiCad — the workcenter installs the upstream PPA build or uses the upstream image.
+- Installing `kicad-packages3d` by default — 3.3 GB for 3D models no gate reads.
+
+## Queue changes
+
+- 2026-10-22 — queue seeded at setup, 4 items, provisional.
