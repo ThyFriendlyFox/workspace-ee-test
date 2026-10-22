@@ -1,0 +1,19 @@
+# Engine output inside fixture projects and any board project
+build/
+*-backups/
+*.kicad_prl
+*.kicad_sch-bak
+*.kicad_pcb-bak
+fp-info-cache
+_autosave-*
+*.lck
+
+# Python
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+
+# Local overrides
+.env
+.claude/settings.local.json
