@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -367,6 +368,16 @@ def load_footprint(lib_id: str) -> Footprint:
 POWER_LIB = "power"
 
 
+def _seg_dist(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Distance from point p to segment ab."""
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    dx, dy = bx - ax, by - ay
+    if dx == dy == 0:
+        return math.hypot(px - ax, py - ay)
+    u = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(px - (ax + u * dx), py - (ay + u * dy))
+
+
 @dataclass
 class Part:
     ref: str
@@ -382,6 +393,9 @@ class Part:
     datasheet: str = ""
     stub: float = 2.54  # schematic stub wire length
     hide_ref: bool = False  # hide the reference designator on the board silkscreen
+    zone_connect: int | None = (
+        None  # how zones meet this part's pads: None inherit, 0 none, 1 thermal, 2 solid
+    )
 
     @property
     def on_board(self) -> bool:
@@ -398,6 +412,22 @@ class Part:
     def unconnected_net(self, pin: Pin) -> str:
         """KiCad's name for the net of a pin with no connection: unconnected-(REF-PINNAME-PadN)."""
         return f"unconnected-({self.ref}-{pin.name.replace('/', '{slash}')}-Pad{pin.number})"
+
+
+@dataclass
+class PadBox:
+    """A placed pad's copper on one layer, in board coordinates."""
+
+    ref: str
+    net: str  # pcb net name, "" for a pad with no net
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    layer: str
+    kind: str  # smd | thru_hole | np_thru_hole
+    drill: float
+    number: str = ""
 
 
 @dataclass
@@ -424,6 +454,12 @@ class Design:
     vias: list[tuple[str, tuple[float, float], float, float]] = field(
         default_factory=list
     )  # net, at, size, drill
+    texts: list[tuple[str, float, float, str, float, float]] = field(
+        default_factory=list
+    )  # text, x, y, layer, size, thickness
+    rules: dict[str, float] = field(default_factory=dict)  # overrides for board.design_settings.rules
+    zones: list[dict] = field(default_factory=list)  # copper pours, see zone()
+    islands: list[list[str]] = field(default_factory=list)  # pads cut off from their pour, set by write()
     _symcache: dict[str, Symbol] = field(default_factory=dict, repr=False)
     _fpcache: dict[str, Footprint] = field(default_factory=dict, repr=False)
 
@@ -455,6 +491,8 @@ class Design:
         descr: str = "",
         datasheet: str = "~",
         stub: float = 2.54,
+        pcb_layer: str = "F.Cu",
+        zone_connect: int | None = None,
     ) -> Part:
         sym = self.symbol(lib_id)
         fpo = self.fp(footprint) if footprint else None
@@ -465,7 +503,14 @@ class Design:
             for pin_no in nets:
                 if pin_no not in pad_numbers:
                     raise KeyError(f"{ref}: pin {pin_no} has no pad in {footprint}")
-        part = Part(ref, sym, value, fpo, sch_at, pcb_at, pcb_rot, "F.Cu", dict(nets), descr, datasheet, stub)
+        if pcb_layer not in ("F.Cu", "B.Cu"):
+            raise ValueError(f"{ref}: pcb_layer must be F.Cu or B.Cu, not {pcb_layer!r}")
+        if zone_connect not in (None, 0, 1, 2):
+            raise ValueError(f"{ref}: zone_connect must be None, 0, 1 or 2, not {zone_connect!r}")
+        part = Part(
+            ref, sym, value, fpo, sch_at, pcb_at, pcb_rot, pcb_layer, dict(nets), descr, datasheet, stub
+        )
+        part.zone_connect = zone_connect
         self.parts.append(part)
         return part
 
@@ -500,6 +545,220 @@ class Design:
         for name in self.unconnected_nets().values():
             ids.setdefault(name, len(ids) + 1)
         return ids
+
+    def text(
+        self,
+        text: str,
+        x: float,
+        y: float,
+        layer: str = "F.SilkS",
+        size: float = 0.8,
+        thickness: float = 0.12,
+    ) -> None:
+        """Free text on the board, e.g. a contact label on the silkscreen. Centered on (x, y)."""
+        self.texts.append((text, x, y, layer, size, thickness))
+
+    def track(
+        self, net: str, points: list[tuple[float, float]], layer: str = "F.Cu", width: float | None = None
+    ) -> None:
+        """Pre-route a net by hand: a polyline on one layer. The router keeps it and routes around it."""
+        if layer not in ("F.Cu", "B.Cu"):
+            raise ValueError(f"track layer must be F.Cu or B.Cu, not {layer!r}")
+        pcb_net = self.pcb_net_name(net)
+        w = self.class_of(pcb_net)["width"] if width is None else width
+        for a, b in zip(points, points[1:], strict=False):
+            self.segments.append((pcb_net, (float(a[0]), float(a[1])), (float(b[0]), float(b[1])), w, layer))
+
+    def via(
+        self, net: str, x: float, y: float, size: float | None = None, drill: float | None = None
+    ) -> None:
+        """Place a via by hand, e.g. a ground stitch; the router keeps it."""
+        pcb_net = self.pcb_net_name(net)
+        spec = self.class_of(pcb_net)
+        self.vias.append(
+            (
+                pcb_net,
+                (float(x), float(y)),
+                spec["via"] if size is None else size,
+                spec["via_drill"] if drill is None else drill,
+            )
+        )
+
+    def pad_boxes(self) -> list[PadBox]:
+        """Every pad as placed on the board; a through-hole pad appears once per copper layer."""
+        boxes: list[PadBox] = []
+        open_nets = self.unconnected_nets()
+        for part in self.parts:
+            if not (part.on_board and part.footprint and part.pcb_at):
+                continue
+            px, py = part.pcb_at
+            back = part.pcb_layer == "B.Cu"
+            th = math.radians(part.pcb_rot)
+            for pad in part.footprint.pads:
+                fx, fy = pad.x, -pad.y if back else pad.y
+                x = px + fx * math.cos(th) + fy * math.sin(th)
+                y = py - fx * math.sin(th) + fy * math.cos(th)
+                w, h = (pad.h, pad.w) if round((pad.angle + part.pcb_rot) % 180) == 90 else (pad.w, pad.h)
+                net = part.nets.get(pad.number)
+                name = self.pcb_net_name(net) if net else open_nets.get((part.ref, pad.number), "")
+                layers = ["F.Cu", "B.Cu"] if pad.kind in ("thru_hole", "np_thru_hole") else [part.pcb_layer]
+                for layer in layers:
+                    boxes.append(
+                        PadBox(
+                            part.ref,
+                            name,
+                            x - w / 2,
+                            y - h / 2,
+                            x + w / 2,
+                            y + h / 2,
+                            layer,
+                            pad.kind,
+                            pad.drill,
+                            pad.number,
+                        )
+                    )
+        return boxes
+
+    def stitch_pads(self, net: str, gap: float = 0.1) -> int:
+        """A via of `net` beside every surface pad of `net` on a poured layer, where one fits.
+
+        The router leaves a poured net's pads alone and other nets' tracks can wall a pad off from the
+        pour; a via of its own, placed before routing, keeps each pad on the pour. Tries the four sides
+        of the pad, `gap` from its edge, and keeps the design clearance from everything else.
+        Returns the number of vias placed.
+        """
+        pcb_net = self.pcb_net_name(net)
+        poured = {layer for z in self.zones if z["net"] == net for layer in z["layers"]}
+        spec = self.class_of(pcb_net)
+        r, drill = spec["via"] / 2, spec["via_drill"]
+        boxes = self.pad_boxes()
+        placed = 0
+        for pad in boxes:
+            if pad.net != pcb_net or pad.layer not in poured or pad.kind != "smd":
+                continue
+            cx, cy = (pad.x1 + pad.x2) / 2, (pad.y1 + pad.y2) / 2
+            candidates = [
+                (cx, pad.y2 + gap + r),
+                (cx, pad.y1 - gap - r),
+                (pad.x2 + gap + r, cy),
+                (pad.x1 - gap - r, cy),
+            ]
+            for vx, vy in candidates:
+                if self._via_fits(vx, vy, r, drill, pcb_net, boxes):
+                    self.via(net, round(vx, 3), round(vy, 3))
+                    placed += 1
+                    break
+        return placed
+
+    def reserve_vias(self, pads: list[str], gaps: tuple[float, ...] = (0.1, 0.3, 0.5, 0.8)) -> int:
+        """A fixed via beside each named pad ("REF.N") of a poured net, for the next routing pass.
+
+        Call it with only the hand-routed copper on the design: the routed tracks are about to be
+        redone around the new vias. Returns how many vias were placed.
+        """
+        boxes = self.pad_boxes()
+        placed = 0
+        for name in pads:
+            ref, _, number = name.partition(".")
+            pad = next((b for b in boxes if b.ref == ref and b.number == number and b.kind == "smd"), None)
+            if pad is None or pad.net == "":
+                continue
+            spec = self.class_of(pad.net)
+            r, drill = spec["via"] / 2, spec["via_drill"]
+            cx, cy = (pad.x1 + pad.x2) / 2, (pad.y1 + pad.y2) / 2
+            spots = [
+                (vx, vy)
+                for gap in gaps
+                for vx, vy in (
+                    (cx, pad.y2 + gap + r),
+                    (cx, pad.y1 - gap - r),
+                    (pad.x2 + gap + r, cy),
+                    (pad.x1 - gap - r, cy),
+                )
+            ]
+            for vx, vy in spots:
+                if self._via_fits(
+                    vx, vy, r, drill, pad.net, boxes
+                ):  # the fixed tracks count, the routed ones are gone
+                    self.vias.append((pad.net, (round(vx, 3), round(vy, 3)), spec["via"], drill))
+                    placed += 1
+                    break
+        return placed
+
+    def _via_fits(
+        self,
+        vx: float,
+        vy: float,
+        r: float,
+        drill: float,
+        pcb_net: str,
+        boxes: list[PadBox],
+        tracks: bool = True,
+    ) -> bool:
+        """Clearance check for a via at (vx, vy): board edge, other nets' pads, holes, vias and tracks."""
+        x1, y1, x2, y2 = self.outline
+        e = self.edge_clearance
+        if not (x1 + e + r <= vx <= x2 - e - r and y1 + e + r <= vy <= y2 - e - r):
+            return False
+        c = self.clearance
+        for pad in boxes:
+            if (
+                pad.drill
+                and math.hypot(vx - (pad.x1 + pad.x2) / 2, vy - (pad.y1 + pad.y2) / 2)
+                < drill / 2 + pad.drill / 2 + 0.25
+            ):
+                return False  # hole to hole
+            if pad.net == pcb_net:
+                continue
+            dx = max(pad.x1 - vx, 0.0, vx - pad.x2)
+            dy = max(pad.y1 - vy, 0.0, vy - pad.y2)
+            if math.hypot(dx, dy) < r + c:
+                return False
+        for _net, (ox, oy), size, odrill in self.vias:
+            if math.hypot(ox - vx, oy - vy) < max(r + size / 2 + c, drill / 2 + odrill / 2 + 0.25):
+                return False
+        for n, (sx, sy), (ex, ey), w, _ in self.segments:
+            if tracks and n != pcb_net and _seg_dist((vx, vy), (sx, sy), (ex, ey)) < r + w / 2 + c:
+                return False
+        return True
+
+    def zone(
+        self,
+        net: str,
+        layers: tuple[str, ...] = ("B.Cu",),
+        polygon: list[tuple[float, float]] | None = None,
+        clearance: float | None = None,
+        min_thickness: float = 0.25,
+        connect: str = "thermal",
+        thermal_gap: float = 0.25,
+        thermal_bridge: float = 0.4,
+    ) -> None:
+        """A copper pour of `net` on `layers`, the whole board unless a polygon is given.
+
+        KiCad fills it when the design is written (`write`); the router sees it as a plane, so the
+        net's pads need no tracks on those layers. `connect` is "thermal" (reliefs) or "solid".
+        """
+        for layer in layers:
+            if layer not in ("F.Cu", "B.Cu"):
+                raise ValueError(f"zone layer must be F.Cu or B.Cu, not {layer!r}")
+        if connect not in ("thermal", "solid"):
+            raise ValueError(f"zone connect must be thermal or solid, not {connect!r}")
+        if polygon is None:
+            x1, y1, x2, y2 = self.outline
+            e = self.edge_clearance
+            polygon = [(x1 + e, y1 + e), (x2 - e, y1 + e), (x2 - e, y2 - e), (x1 + e, y2 - e)]
+        self.zones.append(
+            {
+                "net": net,
+                "layers": tuple(layers),
+                "polygon": [tuple(p) for p in polygon],
+                "clearance": self.clearance if clearance is None else clearance,
+                "min_thickness": min_thickness,
+                "connect": connect,
+                "thermal_gap": thermal_gap,
+                "thermal_bridge": thermal_bridge,
+            }
+        )
 
     def class_of(self, pcb_net: str) -> dict:
         for name, spec in self.net_classes.items():
@@ -718,16 +977,66 @@ class Design:
 
     # ---- board
 
+    _FLIP_LAYERS = {
+        "F.Cu": "B.Cu",
+        "F.SilkS": "B.SilkS",
+        "F.Mask": "B.Mask",
+        "F.Paste": "B.Paste",
+        "F.CrtYd": "B.CrtYd",
+        "F.Fab": "B.Fab",
+        "F.Adhes": "B.Adhes",
+    }
+
+    @classmethod
+    def _flip(cls, node: Node) -> None:
+        """Mirror a library footprint about the X axis onto the back side, the way KiCad's Flip does:
+        y negated, angles negated, front layers swapped for back layers, text mirrored."""
+        for item in node:
+            if not isinstance(item, list) or not item:
+                continue
+            head = item[0]
+            if head in ("layer", "layers"):
+                item[1:] = [Q(cls._FLIP_LAYERS.get(str(a), str(a))) for a in item[1:]]
+            elif head == "at":
+                vals = atoms(item)
+                item[:] = ["at", vals[0], fmt(-num(vals[1]))] + (
+                    [fmt(-num(vals[2]))] if len(vals) > 2 else []
+                )
+            elif head in ("start", "end", "center", "mid", "xy"):
+                vals = atoms(item)
+                item[:] = [head, vals[0], fmt(-num(vals[1]))]
+            elif head == "effects":
+                just = child(item, "justify")
+                if just is None:
+                    item.append(["justify", "mirror"])
+                elif "mirror" not in atoms(just):
+                    just.append("mirror")
+            if head in (
+                "pad",
+                "fp_text",
+                "property",
+                "fp_line",
+                "fp_rect",
+                "fp_circle",
+                "fp_arc",
+                "fp_poly",
+                "pts",
+            ):
+                cls._flip(item)
+
     def _footprint_instance(self, part: Part, net_ids: dict[str, int]) -> Node:
         assert part.footprint and part.pcb_at
         ns = self.namespace
         fpn = copy.deepcopy(part.footprint.node)
+        back = part.pcb_layer == "B.Cu"
+        if back:
+            self._flip(fpn)
         rot = part.pcb_rot
         x, y = part.pcb_at
         out: Node = [
             "footprint",
             Q(part.footprint.lib_id),
-            ["layer", Q("F.Cu")],
+            ["layer", Q("B.Cu" if back else "F.Cu")],
             ["uuid", uid(ns, f"fp/{part.ref}")],
             ["at", fmt(x), fmt(y)] + ([fmt(rot)] if rot else []),
         ]
@@ -778,6 +1087,8 @@ class Design:
         out.append(["sheetfile", Q(f"{self.name}.kicad_sch")])
         attr = child(fpn, "attr")
         out.append(attr if attr else ["attr", "smd"])
+        if part.zone_connect is not None:
+            out.append(["zone_connect", str(part.zone_connect)])
         shape_i = 0
         for item in fpn[1:]:
             if not isinstance(item, list):
@@ -942,6 +1253,23 @@ class Design:
                     ["effects", ["font", ["size", "0.8", "0.8"], ["thickness", "0.12"]], ["justify", "left"]],
                 ]
             )
+        for i, (text, tx, ty, layer, size, thickness) in enumerate(self.texts):
+            effects: Node = [
+                "effects",
+                ["font", ["size", fmt(size), fmt(size)], ["thickness", fmt(thickness)]],
+            ]
+            if layer.startswith("B."):
+                effects.append(["justify", "mirror"])
+            pcb.append(
+                [
+                    "gr_text",
+                    Q(text),
+                    ["at", fmt(tx), fmt(ty), "0"],
+                    ["layer", Q(layer)],
+                    ["uuid", uid(ns, f"text/{i}")],
+                    effects,
+                ]
+            )
         for i, (net, (sx, sy), (ex, ey), w, layer) in enumerate(self.segments):
             pcb.append(
                 [
@@ -964,6 +1292,34 @@ class Design:
                     ["layers", Q("F.Cu"), Q("B.Cu")],
                     ["net", str(net_ids[net])],
                     ["uuid", uid(ns, f"via/{i}")],
+                ]
+            )
+        for i, z in enumerate(self.zones):
+            pcb_net = self.pcb_net_name(z["net"])
+            if pcb_net not in net_ids:
+                raise KeyError(f"zone net {z['net']!r} is on no part")
+            connect: Node = ["connect_pads", ["clearance", fmt(z["clearance"])]]
+            if z["connect"] == "solid":
+                connect.insert(1, "yes")
+            pcb.append(
+                [
+                    "zone",
+                    ["net", str(net_ids[pcb_net])],
+                    ["net_name", Q(pcb_net)],
+                    ["layers", *[Q(layer) for layer in z["layers"]]],
+                    ["uuid", uid(ns, f"zone/{i}")],
+                    ["hatch", "edge", "0.5"],
+                    ["priority", "0"],
+                    connect,
+                    ["min_thickness", fmt(z["min_thickness"])],
+                    ["filled_areas_thickness", "no"],
+                    [
+                        "fill",
+                        "yes",
+                        ["thermal_gap", fmt(z["thermal_gap"])],
+                        ["thermal_bridge_width", fmt(z["thermal_bridge"])],
+                    ],
+                    ["polygon", ["pts", *[["xy", fmt(px), fmt(py)] for px, py in z["polygon"]]]],
                 ]
             )
         pcb.append(["embedded_fonts", "no"])
@@ -1020,6 +1376,7 @@ class Design:
                         "min_via_diameter": 0.5,
                         "solder_mask_to_copper_clearance": 0.0,
                         "use_height_for_length_calcs": True,
+                        **self.rules,
                     },
                 },
                 "ipc2581": {"dist": "", "distpn": "", "internal_id": "", "mfg": "", "mpn": ""},
@@ -1146,8 +1503,13 @@ class Design:
                     pins.append(f'      (pin {ps} "{pad.number}" {c(pad.x)} {c(-pad.y)})')
                 images[fp.lib_id] = f'    (image "{fp.lib_id}"\n' + "\n".join(pins) + "\n    )"
             px, py = part.pcb_at
+            back = part.pcb_layer == "B.Cu"
+            side = "back" if back else "front"
+            # Specctra mirrors a back-side image about the Y axis; KiCad flips about the X axis.
+            # The two differ by a half turn, so the router gets the rotation plus 180 degrees.
+            rot = (part.pcb_rot + 180) % 360 if back else part.pcb_rot
             placement.append(
-                f'    (component "{fp.lib_id}"\n      (place "{part.ref}" {c(px)} {c(-py)} front {fmt(part.pcb_rot)})\n    )'
+                f'    (component "{fp.lib_id}"\n      (place "{part.ref}" {c(px)} {c(-py)} {side} {fmt(rot)})\n    )'
             )
             for pin_no, net in part.nets.items():
                 pins_by_net[self.pcb_net_name(net)].append(f"{part.ref}-{pin_no}")
@@ -1158,10 +1520,6 @@ class Design:
         vias = {via_name(self.via_size, self.via_drill): (self.via_size, self.via_drill)}
         for s in self.net_classes.values():
             vias.setdefault(via_name(s["via"], s["via_drill"]), (s["via"], s["via_drill"]))
-        via_ps = [
-            f'    (padstack "{n}"\n      (shape (circle F.Cu {c(d)}))\n      (shape (circle B.Cu {c(d)}))\n      (attach off)\n    )'
-            for n, (d, _) in vias.items()
-        ]
         nets_out = []
         routable = []
         for name in sorted(net_ids, key=net_ids.get):
@@ -1184,10 +1542,33 @@ class Design:
                 f'      (circuit (use_via "{via_name(s["via"], s["via_drill"])}"))\n'
                 f"      (rule (width {c(s['width'])}) (clearance {c(s['clearance'])}))\n    )"
             )
+        # Tracks and vias already on the board (pre-routed by hand or stitched) are fixed for the router.
+        wiring = [
+            f'    (wire (path {layer} {c(w)} {c(sx)} {c(-sy)} {c(ex)} {c(-ey)}) (net "{net}") (type fix))'
+            for net, (sx, sy), (ex, ey), w, layer in self.segments
+        ] + [
+            f'    (via "{via_name(size, drill)}" {c(vx)} {c(-vy)} (net "{net}") (type fix))'
+            for net, (vx, vy), size, drill in self.vias
+        ]
+        for _net, _at, size, drill in self.vias:
+            vias.setdefault(via_name(size, drill), (size, drill))
         # The router keeps `clearance` from the boundary; the DRC wants edge_clearance. Shrink the boundary.
         e = max(0.0, self.edge_clearance - self.clearance)
+        via_ps = [
+            f'    (padstack "{n}"\n      (shape (circle F.Cu {c(d)}))\n      (shape (circle B.Cu {c(d)}))\n      (attach off)\n    )'
+            for n, (d, _) in vias.items()
+        ]
         bx1, by1, bx2, by2 = x1 + e, y1 + e, x2 - e, y2 - e
         boundary = f"      (path pcb 0 {c(bx1)} {c(-by1)} {c(bx2)} {c(-by1)} {c(bx2)} {c(-by2)} {c(bx1)} {c(-by2)} {c(bx1)} {c(-by1)})"
+        # A zone is a plane to the router: pads of its net on that layer count as connected, other
+        # nets route across it, and KiCad fills around their tracks.
+        planes = [
+            f'    (plane "{self.pcb_net_name(z["net"])}" (polygon {layer} 0 '
+            + " ".join(f"{c(px)} {c(-py)}" for px, py in z["polygon"])
+            + "))"
+            for z in self.zones
+            for layer in z["layers"]
+        ]
         return "\n".join(
             [
                 f'(pcb "{self.name}.dsn"',
@@ -1200,6 +1581,7 @@ class Design:
                 "    (boundary",
                 boundary,
                 "    )",
+                *planes,
                 *[f'    (via "{n}")' for n in vias],
                 f"    (rule (width {c(self.track_width)}) (clearance {c(self.clearance)}) "
                 f"(clearance {c(self.clearance)} (type default_smd)) (clearance {c(self.clearance / 2)} (type smd_smd)))",
@@ -1216,7 +1598,9 @@ class Design:
                 *nets_out,
                 *classes,
                 "  )",
-                "  (wiring)",
+                "  (wiring",
+                *wiring,
+                "  )",
                 ")",
                 "",
             ]
@@ -1270,7 +1654,9 @@ class Design:
                 layer, width = str(vals[0]), mm(vals[1])
                 pts = [(mm(vals[i]), -mm(vals[i + 1])) for i in range(2, len(vals) - 1, 2)]
                 for a, b in zip(pts, pts[1:], strict=False):
-                    if a != b:
+                    if math.hypot(a[0] - b[0], a[1] - b[1]) < 0.02:
+                        continue  # the router echoes fixed wires with a hair of a stub
+                    if not self._has_segment(name, a, b, layer) and not self._covered(name, a, b, layer):
                         self.segments.append((name, a, b, width, layer))
                         added_s += 1
             for via in children(net, "via"):
@@ -1279,9 +1665,57 @@ class Design:
                 size, drill = (
                     (int(m.group(1)) / 1000, int(m.group(2)) / 1000) if m else (self.via_size, self.via_drill)
                 )
-                self.vias.append((name, (mm(vals[1]), -mm(vals[2])), size, drill))
-                added_v += 1
+                at = (mm(vals[1]), -mm(vals[2]))
+                if not self._has_via(name, at):  # fixed vias come back in the session
+                    self.vias.append((name, at, size, drill))
+                    added_v += 1
+        self._split_junctions()
         return added_s, added_v
+
+    def _split_junctions(self) -> None:
+        """Split a segment wherever another segment of its net ends on it, so a T-junction the
+        router made onto a hand-routed track is two proper segment ends, not a dangling end."""
+        ends = [(n, p, ly) for n, a, b, _, ly in self.segments for p in (a, b)]
+        out = []
+        for n, a, b, w, ly in self.segments:
+            cuts = sorted(
+                {
+                    round(
+                        ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1]))
+                        / max((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2, 1e-12),
+                        6,
+                    )
+                    for m, p, lay in ends
+                    if m == n
+                    and lay == ly
+                    and _seg_dist(p, a, b) < 0.005
+                    and math.hypot(p[0] - a[0], p[1] - a[1]) > 0.02
+                    and math.hypot(p[0] - b[0], p[1] - b[1]) > 0.02
+                }
+            )
+            pts = [a] + [(a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])) for u in cuts] + [b]
+            out.extend((n, p, q, w, ly) for p, q in zip(pts, pts[1:], strict=False))
+        self.segments = out
+
+    def _has_via(self, net: str, at: tuple[float, float]) -> bool:
+        return any(n == net and math.hypot(vx - at[0], vy - at[1]) < 0.01 for n, (vx, vy), _, _ in self.vias)
+
+    def _covered(self, net: str, a: tuple[float, float], b: tuple[float, float], layer: str) -> bool:
+        """True when a and b both lie on one existing segment of the net: the router's echo of a
+        fixed wire, cut at a different point."""
+        return any(
+            n == net and ly == layer and _seg_dist(a, s, e) < 0.03 and _seg_dist(b, s, e) < 0.03
+            for n, s, e, _, ly in self.segments
+        )
+
+    def _has_segment(self, net: str, a: tuple[float, float], b: tuple[float, float], layer: str) -> bool:
+        def same(p, q):
+            return math.hypot(p[0] - q[0], p[1] - q[1]) < 0.01
+
+        return any(
+            n == net and ly == layer and ((same(s, a) and same(e, b)) or (same(s, b) and same(e, a)))
+            for n, s, e, _, ly in self.segments
+        )
 
     # ---- files
 
@@ -1294,7 +1728,216 @@ class Design:
         }
         for p, text in files.items():
             p.write_text(text, encoding="utf-8")
+        if self.zones:
+            pcb = out_dir / f"{self.name}.kicad_pcb"
+            fill_zones(pcb)
+            if self.segments:  # a routed board: tracks cut the pours, stitch the pieces back together
+                added, self.islands = stitch_zones(self, pcb)
+                if added:
+                    pcb.write_text(self.board(), encoding="utf-8")
+                    fill_zones(pcb)
         return list(files)
+
+
+def pour_pieces(pcb: Path, net: str) -> dict:
+    """How the filled pours of `net` hang together, read with KiCad's own geometry (pcbnew).
+
+    Returns {"pieces": [(layer, polys, index, items)], "components": [set of piece ids]}: one piece per
+    filled polygon, `items` the pads and vias of the net it touches, and components joined by the
+    through-hole pads and vias shared between layers. Every piece that holds an item should end up in
+    one component; the rest are the islands the DRC reports as unconnected zone-to-zone.
+    """
+    import pcbnew  # KiCad's own Python module; only present where KiCad is installed
+
+    board = pcbnew.LoadBoard(str(pcb))
+    code = board.GetNetcodeFromNetname(net)
+    pieces: list[tuple[str, object, int, list]] = []
+    for zone in board.Zones():
+        if zone.GetNetCode() != code:
+            continue
+        for layer in zone.GetLayerSet().CuStack():
+            polys = zone.GetFilledPolysList(layer)
+            for i in range(polys.OutlineCount()):
+                pieces.append((pcbnew.LayerName(layer), polys, i, []))
+    items = []  # (position, layers, drill)
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            if pad.GetNetCode() == code:
+                layers = {pcbnew.LayerName(ly) for ly in pad.GetLayerSet().CuStack()}
+                items.append((pad.GetPosition(), layers, f"{fp.GetReference()}.{pad.GetNumber()}"))
+    for track in board.GetTracks():
+        if track.GetClass() == "PCB_VIA" and track.GetNetCode() == code:
+            items.append(
+                (
+                    track.GetPosition(),
+                    {"F.Cu", "B.Cu"},
+                    f"via@{track.GetPosition().x / 1e6:.2f},{track.GetPosition().y / 1e6:.2f}",
+                )
+            )
+    parent = list(range(len(pieces)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for pos, layers, name in items:
+        touched = [
+            k for k, (layer, polys, i, _) in enumerate(pieces) if layer in layers and polys.Contains(pos, i)
+        ]
+        for k in touched:
+            pieces[k][3].append(name)
+        for k in touched[1:]:
+            parent[find(k)] = find(touched[0])
+    groups: dict[int, set[int]] = {}
+    for k in range(len(pieces)):
+        groups.setdefault(find(k), set()).add(k)
+
+    def area(group: set[int]) -> float:
+        return sum(pieces[k][1].Outline(pieces[k][2]).Area() for k in group)
+
+    return {"pieces": pieces, "components": sorted(groups.values(), key=area, reverse=True)}
+
+
+def stitch_zones(design: Design, pcb: Path, rounds: int = 6) -> int:
+    """Add vias of a poured net wherever a track has cut a pad off from the rest of its pour.
+
+    The router treats a pour as a plane and leaves its pads alone; KiCad then fills around the
+    other nets' tracks, and a pad can end up on an island. Each round reads the filled board, finds
+    the islands that hold pads, and drops a via through each one into the main pour on the other
+    side; the board is re-filled and read again until every pad is on the main pour or no via fits.
+    Returns (vias added, islands left), an island being the sorted pad names it holds.
+    """
+    try:
+        import pcbnew
+    except ImportError:
+        print(
+            "stitch: pcbnew (KiCad's Python module) is not importable; islands are left to the DRC",
+            file=sys.stderr,
+        )
+        return 0, []
+    added = 0
+    left: list[list[str]] = []
+    for _ in range(rounds):
+        progress = False
+        left = []
+        for z in design.zones:
+            net = design.pcb_net_name(z["net"])
+            spec = design.class_of(net)
+            size, drill = spec["via"], spec["via_drill"]
+            graph = pour_pieces(pcb, net)
+            pieces, components = graph["pieces"], graph["components"]
+            if not components:
+                continue
+            holes = _holes(pcbnew, pcb)
+            for n, comp in enumerate(components[1:], start=1):
+                if not any(pieces[k][3] for k in comp):
+                    continue  # a bare island: KiCad drops it
+                spot = None
+                # Land the via in the biggest other component first; any merge is progress.
+                for m_comp in components[:n] + components[n + 1 :]:
+                    for k in comp:
+                        layer, polys, i, names = pieces[k]
+                        other = "B.Cu" if layer == "F.Cu" else "F.Cu"
+                        targets = [pieces[m] for m in m_comp if pieces[m][0] == other]
+                        spot = _via_spot(pcbnew, polys, i, targets, size / 2, drill / 2, holes)
+                        if spot:
+                            break
+                    if spot:
+                        break
+                if spot is None:
+                    left.append(sorted({n for k in comp for n in pieces[k][3]}))
+                    continue
+                design.vias.append((net, spot, size, drill))
+                holes.append((pcbnew.VECTOR2I_MM(*spot), drill / 2))
+                added += 1
+                progress = True
+        if not progress:
+            break
+        pcb.write_text(design.board(), encoding="utf-8")
+        fill_zones(pcb)
+    return added, left
+
+
+def _holes(pcbnew, pcb: Path) -> list:
+    """(position, radius) of every drilled hole on the board: pads, mounting holes, vias."""
+    board = pcbnew.LoadBoard(str(pcb))
+    holes = []
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            if pad.GetDrillSizeX() > 0:
+                holes.append((pad.GetPosition(), max(pad.GetDrillSizeX(), pad.GetDrillSizeY()) / 2e6))
+    for track in board.GetTracks():
+        if track.GetClass() == "PCB_VIA":
+            holes.append((track.GetPosition(), track.GetDrillValue() / 2e6))
+    return holes
+
+
+def _via_spot(pcbnew, polys, index: int, targets: list, radius: float, hole: float, holes: list):
+    """A point where a via of `radius` sits inside filled polygon `index` of `polys` and inside one of
+    the target polygons on the other layer, clear of every other hole. Scans a 0.1 mm grid from the
+    polygon's centre outwards; None when nothing fits."""
+    if not targets:
+        return None
+    bb = polys.Outline(index).BBox()
+    cx, cy = (bb.GetLeft() + bb.GetRight()) / 2e6, (bb.GetTop() + bb.GetBottom()) / 2e6
+    step = 0.1
+    nx = int((bb.GetRight() - bb.GetLeft()) / 1e6 / step) + 1
+    ny = int((bb.GetBottom() - bb.GetTop()) / 1e6 / step) + 1
+    candidates = [
+        (bb.GetLeft() / 1e6 + ix * step, bb.GetTop() / 1e6 + iy * step)
+        for ix in range(nx)
+        for iy in range(ny)
+    ]
+    candidates.sort(key=lambda c: (c[0] - cx) ** 2 + (c[1] - cy) ** 2)
+    ring = [(math.cos(k * math.pi / 8), math.sin(k * math.pi / 8)) for k in range(16)]
+    margin = radius + 0.05
+
+    def inside(poly, i, x, y) -> bool:
+        if not poly.Contains(pcbnew.VECTOR2I_MM(x, y), i):
+            return False
+        return all(poly.Contains(pcbnew.VECTOR2I_MM(x + margin * dx, y + margin * dy), i) for dx, dy in ring)
+
+    for x, y in candidates:
+        if not inside(polys, index, x, y):
+            continue
+        if not any(inside(tp, ti, x, y) for _, tp, ti, _ in targets):
+            continue
+        p = pcbnew.VECTOR2I_MM(x, y)
+        if any(math.hypot((p.x - hp.x) / 1e6, (p.y - hp.y) / 1e6) < hole + hr + 0.25 for hp, hr in holes):
+            continue
+        return (round(x, 3), round(y, 3))
+    return None
+
+
+def fill_zones(pcb: Path, kicad_cli: str = "kicad-cli") -> None:
+    """Fill the board's zones in place with KiCad (headless) and save it in KiCad's own format."""
+    exe = shutil.which(kicad_cli)
+    if exe is None:
+        raise FileNotFoundError("kicad-cli is needed to fill zones")
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = subprocess.run(
+            [
+                exe,
+                "pcb",
+                "drc",
+                "--refill-zones",
+                "--save-board",
+                "--format",
+                "json",
+                "--output",
+                str(Path(tmp) / "fill.json"),
+                str(pcb),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if proc.returncode not in (0, 5):  # 5: violations found, the gates report those
+        raise RuntimeError(
+            f"kicad-cli could not fill the zones of {pcb}: {proc.stderr.strip() or proc.stdout.strip()}"
+        )
 
 
 # ------------------------------------------------------- design files, routing

@@ -222,3 +222,145 @@ def test_route_round_trip_makes_drc_green(tmp_path):
         "sim": "skip",
         "export": "pass",
     }
+
+
+# ------------------------------------------------------- pours and hand routes
+
+
+def poured_divider() -> kicadgen.Design:
+    d = divider()
+    d.zone("GND", layers=("F.Cu", "B.Cu"), connect="solid")
+    return d
+
+
+@needs_libs
+def test_zone_is_written_to_the_board_and_as_planes_to_the_dsn():
+    d = poured_divider()
+    board = d.board()
+    assert '(net_name "GND")' in board and '(layers "F.Cu" "B.Cu")' in board
+    assert "(connect_pads yes" in board  # solid
+    dsn = d.dsn()
+    assert '(plane "GND" (polygon F.Cu 0 ' in dsn and '(plane "GND" (polygon B.Cu 0 ' in dsn
+    d2 = divider()
+    d2.zone("NOPE")
+    with pytest.raises(KeyError):
+        d2.board()
+
+
+@needs_libs
+def test_hand_routed_track_and_via_are_fixed_wiring_for_the_router():
+    d = divider()
+    d.track("OUT", [(103.0, 105.0), (108.0, 105.0)], "F.Cu")
+    d.via("OUT", 105.0, 106.0)
+    dsn = d.dsn()
+    assert '(wire (path F.Cu 2500 1030000 -1050000 1080000 -1050000) (net "/OUT") (type fix))' in dsn
+    assert '(via "Via[0-1]_600:300_um" 1050000 -1060000 (net "/OUT") (type fix))' in dsn
+    with pytest.raises(ValueError):
+        d.track("OUT", [(0, 0), (1, 1)], "In1.Cu")
+
+
+@needs_libs
+def test_merge_skips_router_echoes_and_splits_t_junctions():
+    d = divider()
+    d.track("OUT", [(103.0, 105.0), (108.0, 105.0)], "F.Cu")
+    d.via("OUT", 105.0, 106.0)
+    ses = """(session gen_divider (placement (resolution um 10)
+      (component "Resistor_SMD:R_0603_1608Metric" (place R1 10850000 -10250000 front 0)))
+      (routes (resolution um 10) (network_out
+        (net "/OUT"
+          (wire (path F.Cu 25000 10400000 -10500000 10700000 -10500000))
+          (wire (path F.Cu 25000 10800000 -10500000 10800500 -10500000))
+          (wire (path F.Cu 25000 10500000 -10500000 10500000 -10700000))
+          (via "Via[0-1]_600:300_um" 10500000 -10600000)))))"""
+    segs, vias = d.merge_ses(ses)
+    assert (segs, vias) == (1, 0)  # the echo and the hair are dropped, the fixed via is not doubled
+    ends = sorted((s, e) for _, s, e, _, _ in d.segments)
+    assert ends == [
+        ((103.0, 105.0), (105.0, 105.0)),
+        ((105.0, 105.0), (105.0, 107.0)),
+        ((105.0, 105.0), (108.0, 105.0)),
+    ]
+
+
+@needs_libs
+def test_stitch_and_reserve_put_a_via_beside_a_surface_ground_pad():
+    d = poured_divider()
+    assert d.stitch_pads("GND") == 1  # R2 pad 2; J1 pin 3 is through-hole and needs none
+    net, (x, y), size, drill = d.vias[0]
+    assert net == "GND" and (size, drill) == (0.6, 0.3)
+    assert abs(x - 109.325) < 1.0 and abs(y - 106.5) < 1.5
+    d = poured_divider()
+    assert d.reserve_vias(["R2.2"]) == 1 and d.reserve_vias(["R2.9", "ZZ.1"]) == 0
+
+
+@needs_libs
+@needs_kicad
+def test_write_fills_the_pour_and_stitches_a_walled_off_pad(tmp_path):
+    pytest.importorskip("pcbnew")
+    d = poured_divider()
+    # Hand routes for every net; the OUT net rings R2's ground pad on the top face, cutting it off
+    # from the pour there. The bottom pour is whole, so one via should bring it back.
+    d.track("VIN", [(103.0, 102.5), (107.675, 102.5)], "F.Cu")
+    d.track("OUT", [(103.0, 105.04), (106.5, 105.04), (107.675, 106.5)], "F.Cu")
+    d.track("OUT", [(109.325, 102.5), (109.325, 103.8), (110.3, 104.6), (110.3, 105.5)], "F.Cu")
+    d.track(
+        "OUT",
+        [
+            (107.675, 106.5),
+            (108.4, 106.5),
+            (108.4, 105.5),
+            (110.3, 105.5),
+            (110.3, 107.5),
+            (108.4, 107.5),
+            (108.4, 106.5),
+        ],
+        "F.Cu",
+    )
+    d.write(tmp_path)
+    assert d.islands == []
+    gnd_vias = [v for v in d.vias if v[0] == "GND"]
+    assert len(gnd_vias) == 1
+    pcb = (tmp_path / "gen_divider.kicad_pcb").read_text()
+    assert "filled_polygon" in pcb
+    code, records = run_cli("gates", tmp_path, "--out", tmp_path / "build")
+    assert code == 0, records
+    assert {r["gate"]: r["status"] for r in records} == {
+        "erc": "pass",
+        "drc": "pass",
+        "sim": "skip",
+        "export": "pass",
+    }
+
+
+@needs_libs
+@needs_kicad
+@needs_router
+def test_design_command_routes_a_poured_board_green(tmp_path):
+    pytest.importorskip("pcbnew")
+    design = tmp_path / "design.py"
+    design.write_text(
+        "import sys, uuid\n"
+        f"sys.path.insert(0, {str(ROOT / 'tools')!r})\n"
+        "import kicadgen\n"
+        "def build():\n"
+        "    d = kicadgen.Design(name='gen_divider', namespace=uuid.UUID(int=9),\n"
+        "                        outline=(100.0, 100.0, 112.0, 110.0))\n"
+        "    d.power_nets = {'GND': 'GND', 'VIN': 'VBUS'}\n"
+        "    d.flagged_nets = ['GND', 'VIN']\n"
+        "    r = 'Resistor_SMD:R_0603_1608Metric'\n"
+        "    hdr = 'Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical'\n"
+        "    d.add('J1', 'Connector_Generic:Conn_01x03', 'IN', hdr, sch_at=(50.8, 50.8),\n"
+        "          pcb_at=(103.0, 102.5), nets={'1': 'VIN', '2': 'OUT', '3': 'GND'})\n"
+        "    d.add('R1', 'Device:R', '10k', r, sch_at=(71.12, 45.72), pcb_at=(108.5, 102.5),\n"
+        "          nets={'1': 'VIN', '2': 'OUT'})\n"
+        "    d.add('R2', 'Device:R', '10k', r, sch_at=(71.12, 58.42), pcb_at=(108.5, 106.5),\n"
+        "          nets={'1': 'OUT', '2': 'GND'})\n"
+        "    d.zone('GND', layers=('F.Cu', 'B.Cu'), connect='solid')\n"
+        "    return d\n",
+        encoding="utf-8",
+    )
+    code, records = run_cli("design", design, "--route", "--passes", "10", "--rounds", "2")
+    assert code == 0, records
+    assert records["islands"] == []
+    code, records = run_cli("gates", tmp_path, "--out", tmp_path / "build")
+    assert code == 0, records

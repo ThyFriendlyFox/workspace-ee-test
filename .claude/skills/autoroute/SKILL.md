@@ -30,14 +30,18 @@ session (`.ses`). There are 2 ways in:
 
 1. `workcenter drc .` first. Fix courtyard overlaps and pad clearance in
    the placement; the router cannot.
-2. `workcenter design design.py --route --passes 20`. The command prints
-   the segment and via counts. Output: `build/route/<name>.dsn`, `.ses`,
-   `freerouting.log`, and the routed `.kicad_pcb`. 20 passes on a
-   40-part board take 1 to 5 minutes.
+2. `workcenter design design.py --route --passes 60`. The command prints
+   the segment and via counts, how many rounds it took, and any ground
+   pad left on an island of its pour. Output: `build/route/<name>.dsn`,
+   `.ses`, `freerouting.log`, and the routed `.kicad_pcb` with its pours
+   filled. A 45-part board routes in under a minute; FreeRouting stops on
+   its own when it gives up on a connection.
 3. `workcenter drc .` reports what stayed unrouted. Unrouted nets mean a
    track width that cannot enter a pad, a crowded region, or a part
    placed where the net cannot reach it. Change the design, run again.
-   Do not lower clearances.
+   Do not lower clearances. A connection a person can see but the router
+   does not find is drawn by hand in the design file (`d.track`, `d.via`;
+   see `board-design`); the router keeps it and routes around it.
 4. `workcenter gates .` must be GREEN before the board is called routed.
 
 ## Steps, hand-drawn board
@@ -61,6 +65,18 @@ session (`.ses`). There are 2 ways in:
 - Per-net widths and vias come from `d.net_classes`; FreeRouting honours
   them through DSN classes. The DRC checks them through the project's
   net class patterns.
+- A `d.zone` pour is a plane to the router: it routes no track for that
+  net and treats its pads as connected. Other nets' tracks cross the
+  plane and KiCad fills around them, so a pad can end up on an island.
+  After each route the design command reads the filled board with
+  KiCad's `pcbnew` module, drops a via through every island it can, and
+  for the rest reserves a via beside the pad and routes again (up to
+  `--rounds`, default 4). What it still reports as an island needs a
+  placement change.
+- Hand-routed tracks and vias go to the router as fixed wiring. The
+  session echoes them, sometimes cut at another point or extended into a
+  pad centre; the merge drops the echoes and splits a track where the
+  router joined one onto it, so the DRC sees no dangling ends.
 
 ## Checks
 
