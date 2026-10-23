@@ -91,7 +91,11 @@ step_apt() {
   log "apt: update"
   apt-get update -qq
   log "apt: install ${packages[*]}"
-  apt-get install -y -qq --no-install-recommends "${packages[@]}" >/dev/null
+  # Visible progress: KiCad is a large download from a PPA that can be slow; a hidden install that
+  # takes 20 minutes looks hung. Non-interactive so no debconf prompt can wait on a terminal.
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    -o Dpkg::Options::=--force-confnew -o Acquire::Retries=3 "${packages[@]}" \
+    | grep -E '^(Get:|Setting up|Unpacking) ' | sed 's/^/[apt] /' || true
   kicad10_present || die "kicad-cli 10.x not found after install"
   log "apt: done; kicad-cli $(kicad-cli version)"
 }
@@ -126,9 +130,9 @@ step_freerouting() {
 
 step_python() {
   local venv="${WC_ROOT}/venv"
-  if [[ ! -x "${venv}/bin/python" ]]; then
-    log "python: creating venv at ${venv}"
-    python3 -m venv "$venv"
+  if [[ ! -x "${venv}/bin/python" ]] || ! grep -q '^include-system-site-packages = true' "${venv}/pyvenv.cfg"; then
+    log "python: creating venv at ${venv} (sees the system packages: KiCad's pcbnew module)"
+    python3 -m venv --system-site-packages "$venv"
   fi
   log "python: installing requirements.txt into venv"
   "${venv}/bin/pip" install -q --upgrade pip

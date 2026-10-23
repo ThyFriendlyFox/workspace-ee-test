@@ -465,7 +465,7 @@ def gate_render(project: Project, out: Path, width: int = 1600) -> Result:
             failures.append("schematic.svg")
     if project.pcb:
         views = (
-            ("board-top", "F.Cu,F.SilkS,F.Mask,F.Fab,Edge.Cuts", []),
+            ("board-top", "F.Cu,F.SilkS,F.Mask,Edge.Cuts", []),
             ("board-bottom", "B.Cu,B.SilkS,B.Mask,Edge.Cuts", ["--mirror"]),
         )
         for name, layers, extra in views:
@@ -555,16 +555,30 @@ def cmd_design(args) -> int:
     }
     code = EXIT_PASS
     if args.route:
+        fixed_segments, fixed_vias = list(design.segments), list(design.vias)  # hand-routed copper
         try:
-            summary["route"] = kicadgen.route(
-                design, out_dir / "build" / "route", passes=args.passes, timeout=args.timeout
-            )
+            for round_no in range(1, args.rounds + 1):
+                summary["route"] = kicadgen.route(
+                    design, out_dir / "build" / "route", passes=args.passes, timeout=args.timeout
+                )
+                summary["files"] = [str(p) for p in design.write(out_dir)]
+                summary["rounds"] = round_no
+                if not design.islands or round_no == args.rounds:
+                    break
+                # Pads walled off from their pour: reserve a via beside each, then route again around it.
+                design.segments = list(fixed_segments)
+                design.vias = list(fixed_vias)
+                if not design.reserve_vias([pad for island in design.islands for pad in island]):
+                    break
+                fixed_vias = list(design.vias)
             if summary["route"].get("unrouted"):
                 code = EXIT_FAIL
         except FileNotFoundError as exc:
             summary["route"] = {"skip": f"engine missing: {exc}"}
             code = EXIT_SKIP
-    summary["files"] = [str(p) for p in design.write(out_dir)]
+    if "files" not in summary:
+        summary["files"] = [str(p) for p in design.write(out_dir)]
+    summary["islands"] = design.islands
     summary["seconds"] = round(time.monotonic() - t0, 2)
     if args.json:
         print(json.dumps(summary, indent=2))
@@ -577,7 +591,10 @@ def cmd_design(args) -> int:
             print(f"  route skipped: {r['skip']}")
         elif r:
             unrouted = "DRC decides" if r["unrouted"] is None else f"{r['unrouted']} unrouted"
-            print(f"  routed: {r['segments']} segments, {r['vias']} vias, {unrouted}  ({r['log']})")
+            rounds = f"{summary.get('rounds', 1)} round(s)"
+            print(f"  routed: {r['segments']} segments, {r['vias']} vias, {unrouted}, {rounds}  ({r['log']})")
+        for island in summary["islands"]:
+            print(f"  island: {', '.join(island)} cut off from their pour; the DRC will report it")
         for f in summary["files"]:
             print(f"  wrote {f}")
     return code
@@ -719,6 +736,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--route", action="store_true", help="export DSN, run FreeRouting, merge the session")
     p.add_argument("--passes", type=int, default=60)
     p.add_argument("--timeout", type=int, default=900)
+    p.add_argument(
+        "--rounds", type=int, default=4, help="route again with a via reserved beside each pad a pour lost"
+    )
 
     args = parser.parse_args(argv)
     if args.command == "doctor":

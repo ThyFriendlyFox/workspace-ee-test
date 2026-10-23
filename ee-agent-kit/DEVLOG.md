@@ -41,6 +41,27 @@ Evidence: <commit / tag / gate run / screenshot>
 
 <!-- Entries below, newest first. -->
 
+## 2026-10-23 — The board shrank to an inch and the tools had to grow up
+
+The first board was 22 by 46 millimetres, parts on one face, headers for
+the wires. The product is an inch by half an inch, so the second version
+had to be that: both faces populated, 0402 parts, through-hole pads for the
+battery, the coils and the puff sensor, and a USB-C port on the short edge.
+The autorouter could not route it. Routed ground alone used up the board,
+so the generator learned copper pours and KiCad fills them without a
+window. Then the router, which treats a pour as a plane, let signal tracks
+wall ground pads off from it; the generator now reads the filled board
+with KiCad's own Python module, drops a via into every island it can, and
+routes again with a via reserved beside the rest. The router also gives up
+on links a person can see; the design file can now draw those by hand and
+the router keeps them. Thirty-odd hand-drawn tracks later the board is
+GREEN: no errors, no open connections, every ground pad on the pour. Two
+mistakes cost hours: assuming where a mirrored part's pads land, and
+hiding apt's output in the install script, which made a slow download look
+like a hang in CI. Both are on the landmine map now.
+
+Evidence: ThyFriendlyFox/vape-prototype v0.2 commit on main with `docs/gates.md` GREEN; this repository's PR with the generator changes and 6 new tests.
+
 ## 2026-10-23 — First real board, and the tools it forced into existence
 
 We designed the first real board with the workcenter: a 39-part,

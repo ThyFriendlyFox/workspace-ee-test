@@ -43,19 +43,51 @@ project and routes it with FreeRouting. No GUI at any step.
    - Schematic positions on the 1.27 mm grid, as multiples of 2.54.
    - `d.net_classes` for heavy nets. The widest track that enters a pad is
      the pad pitch minus the pad width minus 2 x clearance: 0.6 mm for
-     SOT-23 and 0603, 0.4 mm for TSSOP. Put the ADC sense pin behind a
-     series resistor so it is not on the heavy net.
+     SOT-23 and 0603, 0.5 mm for 0402, 0.4 mm for TSSOP. Put the ADC sense
+     pin behind a series resistor so it is not on the heavy net; a sense
+     tap may be drawn thinner than its class with `width=` on `d.track`.
+   - `pcb_layer="B.Cu"` puts a part on the bottom face. The generator
+     mirrors it the way KiCad does. On the back face a part at rotation 0
+     has its pad 1 on the left and its pads' y mirrored: a SOT-23 has gate
+     bottom-left, source top-left, drain right. Read positions from a DRC
+     report (`workcenter drc`) rather than from memory before hand-routing
+     to a back-side pad.
+   - `d.text(label, x, y, "F.SilkS", size, thickness)` for contact labels.
+     Below 0.8 mm text, set `d.rules = {"min_text_height": ..,
+     "min_text_thickness": ..}` or the DRC flags every label.
+   - `d.zone("GND", layers=("F.Cu", "B.Cu"), connect="solid")` for a
+     ground pour on both faces. The router treats it as a plane and routes
+     no ground track; KiCad fills it when the design is written. Prefer
+     solid connections on a dense board: thermal spokes get starved
+     between 0402 pads and the DRC reports each one.
 3. **Place.** Keep courtyards apart; read them with the `footprint`
    command. Group by current: heater copper short, connectors at edges,
-   decoupling beside the IC. Rotate with `pcb_rot`, 90 degrees at a time.
+   decoupling beside the IC on the same face as its pins. Rotate with
+   `pcb_rot`, 90 degrees at a time. Leave the router room: 0402 columns
+   2.3 mm apart let one track pass, rows 1.7 mm apart let a via sit between
+   them. A TSSOP's pads block its sides; signals reach them from under the
+   body or from the row ends.
 4. **Generate and check.** `workcenter design design.py` then
    `workcenter erc .` and `workcenter drc .`. Fix every error except
    unconnected items before routing. Courtyard overlaps and pad clearance
    are placement mistakes the router cannot fix.
-5. **Route.** `workcenter design design.py --route --passes 40`. The
-   command prints unrouted nets. More than a few unrouted means a width
-   that cannot enter a pad, a crowded region, or a board too small. Change
-   the design, not the router settings.
+5. **Route.** `workcenter design design.py --route --passes 60`. The
+   command prints what the router did and which ground pads ended up on an
+   island; `workcenter drc .` lists what stayed unrouted. FreeRouting
+   stops early when it decides a connection cannot be made; more passes do
+   not help. For each one left:
+   - A width that cannot enter a pad, a crowded region, or a board too
+     small: change the design, not the router settings.
+   - A link the router could not find but a person can: draw it with
+     `d.track(net, [(x, y), ...], layer)` and `d.via(net, x, y)` at the
+     end of `build()`. The router keeps hand-routed copper and routes
+     around it. Draw the heavy loop first (battery feed, heater return),
+     then the taps and gate drives, one net at a time, with
+     `workcenter drc .` between rounds: the DRC names the pad or track
+     each slip touches. End tracks on pad centres.
+   - A ground pad cut off from the pour: the design command already
+     routes again with a via reserved beside it (`--rounds`); if it still
+     reports the island, move the walling track or the part.
 6. **Gates.** `workcenter gates .` until GREEN. `workcenter render .` for
    the images. Commit `design.py` and the generated `.kicad_*` files
    together; the generated files are what KiCad opens.
@@ -69,5 +101,6 @@ project and routes it with FreeRouting. No GUI at any step.
 - DRC: 0 errors. Silkscreen warnings near board edges are acceptable;
   clearance and courtyard warnings are not.
 - The design file is the only hand-written source; nobody edits the
-  generated KiCad files.
-- The README names each part choice and the reason.
+  generated KiCad files. Hand-routed copper lives in `build()` too.
+- The README names each part choice and the reason, and lists every
+  external contact with its net, pad and position.
