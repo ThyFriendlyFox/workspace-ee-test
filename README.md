@@ -7,6 +7,9 @@ project into fabrication outputs that passed every gate.
 - **Engines:** KiCad 10 (`kicad-cli`), ngspice, FreeRouting.
 - **Gates:** ERC, DRC, SIM, EXPORT, in that order. A board is done when
   `workcenter gates <project>` prints GREEN.
+- **Design as code:** `workcenter design design.py --route` builds a
+  schematic and a routed board from a Python file that names parts from
+  the KiCad libraries. No GUI at any step.
 - **Skills:** tell a Claude Code agent which gate comes next and how to
   read a report.
 - **Fixture boards:** the tests. 1 passes everything, the others fail 1
@@ -42,9 +45,10 @@ base. `release.yml` publishes it to GHCR on every tag.
 | Path | What |
 |---|---|
 | `install.sh` | The single source of the toolchain. |
-| `tools/workcenter` | The CLI. Standard library only. |
+| `tools/workcenter` | The CLI: gates, `design`, `render`, `doctor`. Standard library only. |
+| `tools/kicadgen.py` | Design a board in Python from the KiCad libraries; writes the KiCad project and routes it headless. |
 | `WORKCENTER.md` | The contract a project gets from this workcenter. |
-| `.claude/skills/` | `attached-repos`, `board-gates`, `autoroute`, `simulate`, `blog-post`. |
+| `.claude/skills/` | `attached-repos`, `board-design`, `board-gates`, `autoroute`, `simulate`, `blog-post`. |
 | `tests/boards/` | Fixture boards and what each proves. |
 | `environment/` | Cloud environment setup script and hosts. |
 | `ee-agent-kit/` | How work on this repository is run. Start at `ee-agent-kit/ROUTING.md`. |

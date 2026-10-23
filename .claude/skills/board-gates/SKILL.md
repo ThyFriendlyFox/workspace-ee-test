@@ -48,8 +48,13 @@ never remove one.
 5. Re-run from step 2. 1 fix, 1 commit, with the gate's summary line as
    evidence in the message. Loop until GREEN.
 6. GREEN: fabrication outputs are in `build/fab/` (gerbers, drill, BOM,
-   schematic PDF). Report the gates table, the counts, and the artifact
-   paths. `build/` stays out of the repository.
+   schematic PDF). Run `workcenter render <project>` for the schematic,
+   board, and 3D images in `build/render/`. Report the gates table, the
+   counts, and the artifact paths. `build/` stays out of the repository;
+   images the README shows are copied into the project's `docs/`.
+7. A generated design (`design.py`, see `board-design`) is fixed in the
+   Python and regenerated with `workcenter design design.py --route`,
+   never by editing the `.kicad_*` files.
 
 ## Common violations and the fix that addresses them
 

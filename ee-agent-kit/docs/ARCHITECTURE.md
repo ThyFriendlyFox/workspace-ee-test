@@ -7,7 +7,8 @@ of skills that together run 4 gates on a KiCad 10 project. The code has
 | Part | Folder | Task |
 |---|---|---|
 | Installer | `install.sh`, `requirements.txt` | Puts KiCad 10, ngspice, Java 21, FreeRouting, and a Python venv on an Ubuntu 24.04 machine. Idempotent. |
-| CLI | `tools/workcenter` | Runs the engines against a project and reports 1 record per gate. Standard library only. |
+| CLI | `tools/workcenter` | Runs the engines against a project and reports 1 record per gate. `design` builds a design file, `render` makes images. Standard library only. |
+| Generator | `tools/kicadgen.py` | Turns a Python design (parts from the KiCad libraries, nets, positions) into schematic, board, project, Specctra DSN, and merges the routed session back. Standard library only. |
 | Skills | `.claude/skills/*/SKILL.md` | Tell the agent which gate comes next and how to read a report. Loaded by Claude Code from this repository or from a copy. |
 | Fixture boards | `tests/boards/*`, `tests/test_gates.py` | The tests of the gates. 1 board passes everything; the others fail 1 named gate. |
 | Manifest | `WORKCENTER.md` | The contract a project gets: tools, skills, gates, paths, requirements. |
@@ -34,13 +35,19 @@ of skills that together run 4 gates on a KiCad 10 project. The code has
 6. The agent reads the red gate's report, fixes the schematic or board,
    commits, and runs step 3 again.
 7. GREEN: `build/fab/` holds gerbers, drill files, the BOM, and the
-   schematic PDF. The board is done.
+   schematic PDF. `workcenter render` adds the images. The board is done.
+
+A generated board enters at step 3 from `workcenter design design.py
+--route`: the generator loads the libraries, writes the DSN, runs
+FreeRouting, merges the session, and writes the `.kicad_*` files that the
+gates then read like any other project.
 
 ## CLI
 
 | File | Task |
 |---|---|
-| `tools/workcenter` | `find_project`, 1 `gate_*` function per gate, `cmd_gates` for the ordered run, `cmd_doctor` for engine status, `emit` for output and exit codes. |
+| `tools/workcenter` | `find_project`, 1 `gate_*` function per gate, `gate_render`, `cmd_gates` for the ordered run, `cmd_design` for design files, `cmd_doctor` for engine status, `emit` for output and exit codes. |
+| `tools/kicadgen.py` | `parse`/`dumps` for S-expressions, `load_symbol`/`load_footprint`, `Design` with `schematic()`, `board()`, `project()`, `dsn()`, `merge_ses()`, `write()`; `load_design()` and `route()` for the CLI. |
 
 ## Boundaries
 

@@ -18,11 +18,11 @@ the skills tell the agent which gate comes next.
 
 ## Feature Queue — ordered; top unblocked item ships next
 
-### 1. Headless autoroute round trip through the IPC API
-- **Promise:** `workcenter autoroute --apply <project>` exports the Specctra DSN itself, runs FreeRouting, writes the routed tracks from the session into the board file, and the new fixture `route-me` passes DRC with 0 unconnected items afterwards, with no KiCad GUI step.
+### 1. Headless autoroute for hand-drawn boards
+- **Promise:** `workcenter autoroute --apply <project>` reads any `.kicad_pcb` (footprints, pads, outline, nets, existing tracks) into the DSN writer that `kicadgen` already has, runs FreeRouting, merges the session into the board file, and the new fixture `route-me` passes DRC with 0 unconnected items afterwards, with no KiCad GUI step.
 - **Evidence:** `tests/test_gates.py::test_autoroute_apply_routes_fixture` green in `make verify`; the fixture's DRC report attached to the PR.
 - **Use case:** Route a board (`docs/USE-CASES.md`).
-- **Scope guard:** No routing heuristics of our own. No GUI automation. kipy under Xvfb is in scope; a KiCad fork is not. `kicad-cli` 10 has no Specctra export, so the export goes through kipy or a DSN writer of our own.
+- **Scope guard:** No routing heuristics of our own. No GUI automation. The generated-design path already works (`workcenter design --route`); this item is the board-file parser in front of it. Zones and arcs may be out of scope for the first cut and must be reported, not silently dropped.
 - **Status:** ready
 
 ### 2. Board gates as a reusable GitHub workflow for board repositories
@@ -48,6 +48,9 @@ the skills tell the agent which gate comes next.
 
 ## Later — candidates, not yet specced
 
+- Copper pours in `kicadgen` — a zone per power net with `kicad-cli pcb drc --refill-zones`, so heater returns stop depending on 0.4 mm tracks.
+- `kicadgen` schematic layout — wires between blocks instead of stub labels, for schematics humans read on paper.
+- Pad-entry width check before routing — warn in `workcenter design` when a net class is wider than its narrowest pad allows.
 - SIM gate from the schematic — export the SPICE netlist automatically and apply a stimulus template, so a project without a hand-written deck still gets a simulation.
 - `workcenter new <name>` — scaffold a board project with the `.gitignore`, `sim/`, and a passing starter board.
 - Publish the workcenter as an account-level Claude Code plugin — skills and the MCP server arrive in every cloud session without touching board repositories.
@@ -58,6 +61,7 @@ the skills tell the agent which gate comes next.
 
 | Week | Feature | Release | Evidence |
 |---|---|---|---|
+| 2026-10-23 | `kicadgen` design-as-code generator; `workcenter design --route` headless autoroute for generated boards; `workcenter render`; `board-design` skill | unreleased | `tests/test_kicadgen.py` incl. the routed round trip; the first real board, GREEN in its own repository; `DEVLOG.md` 2026-10-23 |
 | 2026-10-22 | Install the kit; `install.sh`; gates ERC, DRC, SIM, EXPORT; fixture boards; skills | unreleased | `make verify` green at the install commit; `DEVLOG.md` 2026-10-22 |
 
 ## Explicitly not doing
@@ -70,3 +74,4 @@ the skills tell the agent which gate comes next.
 ## Queue changes
 
 - 2026-10-22 — queue seeded at setup, 4 items, provisional.
+- 2026-10-23 — item 1 re-scoped: the generated-design half shipped out of band while building the first board; the remaining half is a `.kicad_pcb` reader in front of the same DSN writer.

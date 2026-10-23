@@ -32,11 +32,11 @@ KICAD_PPA_FPR="FDA854F61C4D0D9572BB95E5245D5502FAD7A805"   # "PPA for KiCad: 10.
 KICAD_KEYRING="/etc/apt/keyrings/kicad-10.0-releases.gpg"
 KICAD_SOURCES="/etc/apt/sources.list.d/kicad-10.0-releases.sources"
 KICAD_PACKAGES=(kicad kicad-symbols kicad-footprints kicad-templates)
-BASE_PACKAGES=(ngspice openjdk-21-jre-headless xvfb shellcheck
+BASE_PACKAGES=(ngspice openjdk-21-jre-headless xvfb shellcheck librsvg2-bin
                python3 python3-venv python3-pip curl ca-certificates)
 
-FREEROUTING_VERSION="${FREEROUTING_VERSION:-2.1.0}"
-FREEROUTING_SHA256="${FREEROUTING_SHA256:-2c07d58f75dac03782664081e7a58b41c25400d871a9fcf166a2ea6fe60d5def}"
+FREEROUTING_VERSION="${FREEROUTING_VERSION:-1.9.0}"
+FREEROUTING_SHA256="${FREEROUTING_SHA256:-9084a4888937a7f31f857ecc12aa7a37407f51160e4d2892dff9c9bb47ae3102}"
 FREEROUTING_URL="${FREEROUTING_URL:-https://github.com/freerouting/freerouting/releases/download/v${FREEROUTING_VERSION}/freerouting-${FREEROUTING_VERSION}.jar}"
 REQUIRE_FREEROUTING="${REQUIRE_FREEROUTING:-0}"
 SKIP_APT="${SKIP_APT:-0}"

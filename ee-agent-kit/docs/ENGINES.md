@@ -31,21 +31,47 @@ NGSPICE=ngspice       # default
 
 ## FreeRouting
 
-Java autorouter. Powers the autoroute command: Specctra DSN in, Specctra
-session out. Needs Java 21. `install.sh` downloads the pinned release
-JAR and checks its SHA-256; a blocked download leaves the engine absent
-and `doctor` reports `degraded`. `kicad-cli` 10 cannot export a DSN, so
-the command takes one exported from KiCad (`<project>/<name>.dsn` or
-`--dsn`) and skips loudly without it.
+Java autorouter, release 1.9.0. Powers `workcenter design --route` and the
+autoroute command: Specctra DSN in, Specctra session out. Needs Java 21.
+`install.sh` downloads the pinned release JAR and checks its SHA-256; a
+blocked download leaves the engine absent and `doctor` reports
+`degraded`. Release 2.1.0 is not used: it checks GitHub for updates at
+start and never finishes a job when that call fails, which it does in
+every proxied environment. For a hand-drawn board `kicad-cli` 10 cannot
+export a DSN, so the autoroute command takes one exported from KiCad
+(`<project>/<name>.dsn` or `--dsn`) and skips loudly without it.
 
 ```sh
 FREEROUTING_JAR=/opt/workcenters/ee/freerouting/freerouting.jar   # default
 JAVA=java
 ```
 
-Neither end of the round trip is headless yet: the DSN export and the
-session import both happen in KiCad. ROADMAP item 1 adds both through
-kipy.
+For a kicadgen design the whole round trip is headless: `tools/kicadgen.py`
+writes the DSN from the design model (0.1 um units, y up, pads as rect or
+circle padstacks, non-plated holes as unconnected pins, net classes with
+their own widths and vias) and merges the session back into the board.
+FreeRouting writes session coordinates at 10 times its declared
+resolution; the merge takes the scale from the session's placement block.
+For a hand-drawn `.kicad_pcb` both ends still happen in KiCad; reading an
+arbitrary board file into the DSN writer is ROADMAP item 1.
+
+## kicadgen
+
+`tools/kicadgen.py` is not an engine but the way designs reach the
+engines without a GUI. It parses the KiCad symbol and footprint libraries
+(`KICAD_SYMBOL_DIR`, `KICAD_FOOTPRINT_DIR`), flattens derived symbols,
+strips the KiCad 10 library tokens the 9.0 file formats do not know, and
+writes the schematic (stub wires and labels, power symbols, PWR_FLAG
+pairs, no-connects with KiCad's `unconnected-(...)` pad nets), the board
+(footprint instances with rotation, nets, outline, segments, vias), and
+the project file (net classes, severities for the embedded-library
+warnings). `workcenter design <design.py> [--route]` drives it.
+
+## librsvg
+
+`rsvg-convert` turns the SVGs that `kicad-cli` exports into PNGs for
+`workcenter render`. Absent, the render command keeps the SVGs and says
+which PNGs it skipped.
 
 ## kipy (planned)
 

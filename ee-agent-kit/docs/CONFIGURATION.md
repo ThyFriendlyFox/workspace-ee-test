@@ -36,9 +36,19 @@ unset variable never causes a failure.
 | `--strict` | gates, erc, drc, sim, export | off | Warnings fail the gate. |
 | `--step` | gates, export | off | Also export a STEP model. |
 | `--dsn FILE` | autoroute | `<project>/<name>.dsn`, then `build/route/<name>.dsn` | Specctra DSN exported from KiCad. Absent means the command skips. |
-| `--passes N` | autoroute | `20` | FreeRouting optimisation passes. |
+| `--passes N` | autoroute, design | `20` autoroute, `60` design | FreeRouting optimisation passes. |
 | `--threads N` | autoroute | engine default | FreeRouting thread count. |
-| `--timeout S` | autoroute | `600` | Kill the router after S seconds. |
+| `--timeout S` | autoroute, design | `600` autoroute, `900` design | Kill the router after S seconds. |
+| `--route` | design | off | Export the DSN, run FreeRouting, merge the session before writing. |
+| `--width PX` | render | `1600` | Image width; the schematic PNG is twice that. |
+
+## `tools/kicadgen.py`
+
+| Field | Type | Default | Use |
+|---|---|---|---|
+| `KICAD_SYMBOL_DIR` | path | `/usr/share/kicad/symbols` | Symbol libraries to read. |
+| `KICAD_FOOTPRINT_DIR` | path | `/usr/share/kicad/footprints` | Footprint libraries to read. |
+| `FREEROUTING_JAR` | path | `/opt/workcenters/ee/freerouting/freerouting.jar` | Used by `route()`. |
 
 ## `environment/setup.sh`
 
