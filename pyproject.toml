@@ -8,6 +8,7 @@ select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/boards/generate.py" = ["E501"]  # S-expression templates
+"tools/kicadgen.py" = ["E501"]  # S-expression and Specctra templates
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

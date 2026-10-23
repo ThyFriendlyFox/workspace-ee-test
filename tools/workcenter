@@ -420,7 +420,167 @@ def gate_autoroute(
     )
 
 
+@timed
+def gate_render(project: Project, out: Path, width: int = 1600) -> Result:
+    """Images of the design: schematic, board top and bottom (2D), board 3D top and isometric."""
+    rdir = out / "render"
+    rdir.mkdir(parents=True, exist_ok=True)
+    artifacts: list[str] = []
+    failures: list[str] = []
+    skipped: list[str] = []
+    rsvg = shutil.which("rsvg-convert")
+
+    def to_png(svg: Path, png: Path, w: int) -> None:
+        if not rsvg:
+            skipped.append(f"{png.name}: rsvg-convert missing")
+            return
+        proc = run([rsvg, "-w", str(w), "-b", "white", "-o", png, svg])
+        if proc.returncode == 0 and png.is_file():
+            artifacts.append(str(png))
+        else:
+            failures.append(png.name)
+
+    if project.sch:
+        before = set(rdir.glob("*.svg"))
+        proc = run(
+            [
+                KICAD_CLI,
+                "sch",
+                "export",
+                "svg",
+                "--output",
+                f"{rdir}/",
+                "--no-background-color",
+                "--exclude-drawing-sheet",
+                project.sch,
+            ],
+            cwd=project.dir,
+        )
+        new = sorted(set(rdir.glob("*.svg")) - before, key=lambda p: p.stat().st_mtime)
+        if proc.returncode == 0 and new:
+            svg = new[-1].replace(rdir / "schematic.svg")
+            artifacts.append(str(svg))
+            to_png(svg, rdir / "schematic.png", width * 2)
+        else:
+            failures.append("schematic.svg")
+    if project.pcb:
+        views = (
+            ("board-top", "F.Cu,F.SilkS,F.Mask,F.Fab,Edge.Cuts", []),
+            ("board-bottom", "B.Cu,B.SilkS,B.Mask,Edge.Cuts", ["--mirror"]),
+        )
+        for name, layers, extra in views:
+            svg = rdir / f"{name}.svg"
+            proc = run(
+                [
+                    KICAD_CLI,
+                    "pcb",
+                    "export",
+                    "svg",
+                    "--output",
+                    svg,
+                    "--layers",
+                    layers,
+                    "--page-size-mode",
+                    "2",
+                    "--mode-single",
+                    "--exclude-drawing-sheet",
+                    *extra,
+                    project.pcb,
+                ],
+                cwd=project.dir,
+            )
+            if proc.returncode == 0 and svg.is_file():
+                artifacts.append(str(svg))
+                to_png(svg, rdir / f"{name}.png", width)
+            else:
+                failures.append(svg.name)
+        renders = (
+            ("board-3d-top", []),
+            ("board-3d-iso", ["--rotate", "-35,0,25", "--perspective"]),
+        )
+        for name, extra in renders:
+            png = rdir / f"{name}.png"
+            cmd = [
+                KICAD_CLI,
+                "pcb",
+                "render",
+                "--output",
+                png,
+                "--width",
+                str(width),
+                "--height",
+                str(int(width * 0.625)),
+                "--background",
+                "opaque",
+                "--quality",
+                "high",
+                *extra,
+                project.pcb,
+            ]
+            if not os.environ.get("DISPLAY") and shutil.which("xvfb-run"):
+                cmd = ["xvfb-run", "-a", *cmd]
+            proc = run(cmd, cwd=project.dir, timeout=300)
+            if proc.returncode == 0 and png.is_file():
+                artifacts.append(str(png))
+            else:
+                failures.append(png.name)
+    if not artifacts:
+        return Result("render", "skip", "nothing rendered", {"failures": failures, "skipped": skipped})
+    return Result(
+        "render",
+        "fail" if failures else "pass",
+        f"{len(artifacts)} images in {rdir}" + (f", {len(skipped)} skipped" if skipped else ""),
+        {"failures": failures, "skipped": skipped},
+        artifacts,
+    )
+
+
 # --------------------------------------------------------------- commands
+
+
+def cmd_design(args) -> int:
+    """Build a kicadgen design file into a KiCad project, routing it when asked."""
+    sys.path.insert(0, str(SRC_DIR / "tools"))
+    import kicadgen
+
+    design_path = Path(args.design).resolve()
+    out_dir = Path(args.out).resolve() if args.out else design_path.parent
+    t0 = time.monotonic()
+    design = kicadgen.load_design(design_path)
+    summary: dict = {
+        "design": str(design_path),
+        "name": design.name,
+        "parts": len(design.parts),
+        "nets": len(design.net_names()),
+    }
+    code = EXIT_PASS
+    if args.route:
+        try:
+            summary["route"] = kicadgen.route(
+                design, out_dir / "build" / "route", passes=args.passes, timeout=args.timeout
+            )
+            if summary["route"].get("unrouted"):
+                code = EXIT_FAIL
+        except FileNotFoundError as exc:
+            summary["route"] = {"skip": f"engine missing: {exc}"}
+            code = EXIT_SKIP
+    summary["files"] = [str(p) for p in design.write(out_dir)]
+    summary["seconds"] = round(time.monotonic() - t0, 2)
+    if args.json:
+        print(json.dumps(summary, indent=2))
+    else:
+        print(
+            f"design {design.name}: {summary['parts']} parts, {summary['nets']} nets  [{summary['seconds']}s]"
+        )
+        r = summary.get("route")
+        if r and "skip" in r:
+            print(f"  route skipped: {r['skip']}")
+        elif r:
+            unrouted = "DRC decides" if r["unrouted"] is None else f"{r['unrouted']} unrouted"
+            print(f"  routed: {r['segments']} segments, {r['vias']} vias, {unrouted}  ({r['log']})")
+        for f in summary["files"]:
+            print(f"  wrote {f}")
+    return code
 
 
 def cmd_doctor(args) -> int:
@@ -440,6 +600,12 @@ def cmd_doctor(args) -> int:
             "path": str(WC_ROOT / "venv"),
         },
         "xvfb": {"required": False, "ok": shutil.which("Xvfb") is not None},
+        "rsvg-convert": {"required": False, "ok": shutil.which("rsvg-convert") is not None},
+        "symbols": {
+            "required": False,
+            "ok": Path("/usr/share/kicad/symbols/Device.kicad_sym").is_file(),
+            "path": "/usr/share/kicad/symbols",
+        },
         "manifest": {
             "required": True,
             "ok": (SRC_DIR / "WORKCENTER.md").is_file(),
@@ -493,7 +659,8 @@ def emit(results: list[Result], args, out: Path | None = None) -> int:
 def cmd_gate(args, fn, **kwargs) -> int:
     project = find_project(args.project)
     out = out_dir_for(project, args.out)
-    return emit([fn(project, out, **kwargs)], args, out)
+    # A single gate writes its own report into `out`; only `gates` writes the combined gates.json.
+    return emit([fn(project, out, **kwargs)], args, None)
 
 
 def cmd_gates(args) -> int:
@@ -542,10 +709,24 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--passes", type=int, default=20)
     p.add_argument("--threads", type=int, default=0)
     p.add_argument("--timeout", type=int, default=600)
+    p = add_project_cmd("render", "images: schematic, board top/bottom, 3D top and isometric")
+    p.add_argument("--width", type=int, default=1600, help="image width in pixels")
+    p = sub.add_parser(
+        "design", help="build a kicadgen design.py into a KiCad project; --route runs FreeRouting"
+    )
+    p.add_argument("design", help="path to a design file exposing build() -> kicadgen.Design")
+    p.add_argument("--out", help="output directory (default: the design file's directory)")
+    p.add_argument("--route", action="store_true", help="export DSN, run FreeRouting, merge the session")
+    p.add_argument("--passes", type=int, default=60)
+    p.add_argument("--timeout", type=int, default=900)
 
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return cmd_doctor(args)
+    if args.command == "design":
+        return cmd_design(args)
+    if args.command == "render":
+        return cmd_gate(args, gate_render, width=args.width)
     if args.command == "gates":
         return cmd_gates(args)
     if args.command == "autoroute":

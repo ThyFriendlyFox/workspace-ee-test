@@ -41,6 +41,37 @@ Evidence: <commit / tag / gate run / screenshot>
 
 <!-- Entries below, newest first. -->
 
+## 2026-10-23 — First real board, and the tools it forced into existence
+
+We designed the first real board with the workcenter: a 39-part,
+2-layer controller with a battery charger, an LDO, an MCU, and two
+switched power channels. The board lives in its own repository, as the
+attached-repos rule says; this repository keeps only the tools.
+
+Hand-writing KiCad files does not scale past a few parts, so we built
+`kicadgen`: a design is Python, parts come from the installed KiCad
+libraries, and the generator writes the schematic, the board, and the
+project. The first schematic passed ERC with 0 errors and 0 warnings on
+the first run.
+
+Routing broke three times. `kicad-cli` 10 cannot export a Specctra DSN, so
+we wrote the exporter. FreeRouting wrote the session at 10 times its
+declared resolution, so every track landed off the board; the merge now
+reads the scale from the session's placement block. Then 1.0 mm heater
+tracks could not enter SOT-23 and TSSOP pads, which the router reports as
+unrouted pins, not as an error; 0.6 mm and a sense resistor in front of
+the ADC fixed it. FreeRouting 2.1.0 then never finished a job: it checks
+GitHub for updates at start, the call fails behind a proxy, and its main
+thread sleeps forever after routing. The engine is pinned to 1.9.0, which
+has no network code and finishes in under a minute.
+
+We added `workcenter design` and `workcenter render`, a `board-design`
+skill, and tests that include a routed round trip.
+
+Evidence: `tests/test_kicadgen.py` green with FreeRouting installed, 22
+tests in `make verify`; the first board's gates report lives with that
+board.
+
 ## 2026-10-22 — Installed the agent kit; the workcenter exists
 
 This repository started empty. We made it the EE Workcenter: a
