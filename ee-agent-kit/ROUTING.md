@@ -13,6 +13,8 @@ already defines.
 | "Push out a feature" / "do the weekly update" / a scheduled weekly trigger fired | `WEEKLY.md` | The core cycle. Requires ROADMAP.md to have a ready queue. |
 | Deciding WHAT to build, or the queue is empty/stale | `ROADMAP.md` | The single source of work. Nothing gets built that isn't traceable to it. |
 | Writing or changing ANY code, at any time | `AGENTS.md` | The binding contract: commands, invariants, landmines, style. Always in effect. |
+| About to do something `PROCESSES.md` names (a hand route, a CI step, a route, a doc that names a tag or run, a scripted edit, a close-out) | `PROCESSES.md` | Binding checklists. Follow the steps; done means its "Done when" holds. |
+| You made a mistake, redid work, or a run was red because of you | `MISTAKES.md` | Append the entry and point it at a process, same PR. No process yet → write it (`P13`). |
 | Asked "where does this project stand?" | `STATUS.md` | Answer from it; update it when state changes. |
 | The gate fails, or you're adding/changing checks | `VERIFICATION.md` | One command answers "is this repo healthy". |
 | Cutting a release / tagging | `RELEASING.md` | Weekly cycle ends here. |
@@ -34,7 +36,7 @@ already defines.
 ## Precedence
 
 1. `SECURITY.md` overrides everything for security-shaped work.
-2. `AGENTS.md` is binding whenever code is touched; `TONE.md` is binding whenever the agent writes words. When either conflicts with intuition, it wins.
+2. `AGENTS.md` is binding whenever code is touched; `PROCESSES.md` is binding whenever an action it names is taken; `TONE.md` is binding whenever the agent writes words. When any of them conflicts with intuition, it wins.
 3. `ROADMAP.md` decides what gets built. If requested work isn't on it, add it to the roadmap first (or get the human to), then build it. **The roadmap is not optional — every feature flows down from it.**
 4. `VERIFICATION.md`'s gate decides what ships. No green, no push.
 5. Everything else is reference.

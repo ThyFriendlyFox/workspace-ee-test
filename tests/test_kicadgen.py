@@ -227,6 +227,14 @@ def test_route_round_trip_makes_drc_green(tmp_path):
 # ------------------------------------------------------- pours and hand routes
 
 
+@needs_kicad
+def test_pcbnew_imports_where_kicad_is_installed():
+    """Pour filling and island stitching read the board with KiCad's Python module. install.sh makes the
+    venv with --system-site-packages so this interpreter sees it; without that the pour tests skip in
+    silence (MISTAKES.md M17), which this test turns into a red run."""
+    import pcbnew  # noqa: F401
+
+
 def poured_divider() -> kicadgen.Design:
     d = divider()
     d.zone("GND", layers=("F.Cu", "B.Cu"), connect="solid")

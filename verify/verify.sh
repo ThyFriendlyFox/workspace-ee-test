@@ -41,6 +41,16 @@ for kit_skill in ee-agent-kit/skills/*/; do
     || { echo "ee-agent-kit/skills/$name drifted from .claude/skills/$name"; exit 1; }
 done
 [[ -f WORKCENTER.md ]] || { echo "WORKCENTER.md missing at repo root"; exit 1; }
+# Every mistake names a process that exists; every process says when it is done.
+grep -oE '^Process: P[0-9]+' ee-agent-kit/MISTAKES.md | awk '{print $2}' | sort -u | while read -r p; do
+  grep -qE "^## $p " ee-agent-kit/PROCESSES.md || { echo "MISTAKES.md names $p; PROCESSES.md has no '## $p'"; exit 1; }
+done || exit 1
+awk '/^## M[0-9]+ /{if (h != "" && !p) {print h ": no Process line"; bad = 1}; h = $0; p = 0}
+     /^Process: P[0-9]+$/{p = 1}
+     END{if (h != "" && !p) {print h ": no Process line"; bad = 1}; exit bad}' ee-agent-kit/MISTAKES.md || exit 1
+awk '/^## P[0-9]+ /{if (h != "" && !d) {print h ": no Done when line"; bad = 1}; h = $0; d = 0}
+     /^Done when:/{d = 1}
+     END{if (h != "" && !d) {print h ": no Done when line"; bad = 1}; exit bad}' ee-agent-kit/PROCESSES.md || exit 1
 echo "kit checks ok"
 
 printf '\nVERIFY GREEN\n'

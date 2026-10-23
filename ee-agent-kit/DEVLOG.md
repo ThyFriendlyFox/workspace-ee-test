@@ -62,6 +62,8 @@ like a hang in CI. Both are on the landmine map now.
 
 Evidence: ThyFriendlyFox/vape-prototype v0.2 commit on main with `docs/gates.md` GREEN; this repository's PR with the generator changes and 6 new tests.
 
+**Mistakes became a file.** The human asked that every mistake be recorded with a process that prevents it. `MISTAKES.md` now holds the eighteen from these two days, each with its cost and root cause, and `PROCESSES.md` holds the fourteen checklists they produced, from pad geometry before a hand route to closing out a change. `make verify` refuses a mistake with no process and a process with no "Done when". The one that cost most, two hours of hand-routing to pad positions I had worked out in my head, is M11; its process is P1.
+
 ## 2026-10-23 — First real board, and the tools it forced into existence
 
 We designed the first real board with the workcenter: a 39-part,

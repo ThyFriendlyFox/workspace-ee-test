@@ -88,3 +88,7 @@ provides them. `python3 tools/workcenter doctor` says what is present.
 - Commit at boundaries; message says what changed and cites evidence.
 - Docs move with behavior — same commit or PR.
 - Report outcomes faithfully; failing is failing, with output.
+- `PROCESSES.md` is binding: before an action it names, follow its steps;
+  a change is done when the process's "Done when" holds.
+- Every mistake gets an entry in `MISTAKES.md` and a process that prevents
+  it, in the same PR as the fix (`P13`). `make verify` checks the link.
