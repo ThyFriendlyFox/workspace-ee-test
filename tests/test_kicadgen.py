@@ -773,3 +773,51 @@ def test_island_stitching_keeps_clear_of_tracks_on_the_layers_a_via_passes(tmp_p
         and kicadgen._seg_dist((x, y), (108.6, 106.5), (110.1, 106.5)) < size / 2 + 0.125 + 0.2
     ]
     assert near == [] and d.islands, (near, d.islands)
+
+
+# ------------------------------------------------------------- custom pads
+
+QFN28 = "Package_DFN_QFN:QFN-28_4x4mm_P0.5mm"  # corner pads are chamfered custom shapes
+
+
+@needs_libs
+def test_custom_pad_is_sized_from_its_primitives():
+    """A custom pad's `size` is its anchor only; the via checks need the copper (M38)."""
+    pads = {p.number: p for p in kicadgen.load_footprint(QFN28).pads}
+    corner, side = pads["1"], pads["2"]
+    assert corner.shape == "custom" and side.shape == "roundrect"
+    # A 0.665 x 0.16 polygon drawn with a 0.09 stroke: 0.755 x 0.25, the side pads' width.
+    assert (corner.w, corner.h) == pytest.approx((0.755, 0.25), abs=1e-6)
+
+
+@needs_libs
+@needs_kicad
+def test_back_face_custom_pads_mirror_their_shapes_and_keep_clearance(tmp_path):
+    """A QFN on the bottom face: each corner pad's chamfer must face its neighbour round the corner,
+    as on the top face; unmirrored shapes left 0.03 mm between corner pads (M38)."""
+    d = kicadgen.Design(name="qfn_back", namespace=uuid.UUID(int=38), outline=(100.0, 100.0, 110.0, 110.0))
+    d.add(
+        "U1",
+        "MCU_ST_STM32G0:STM32G031G8Ux",
+        "STM32G031G8U6",
+        QFN28,
+        sch_at=(50.8, 50.8),
+        pcb_at=(105.0, 105.0),
+        pcb_layer="B.Cu",
+        nets={"3": "VDD", "4": "GND"},
+    )
+    board = kicadgen.parse(d.board())
+    fp = kicadgen.child(board, "footprint")
+    pad1 = next(p for p in kicadgen.children(fp, "pad") if p[1] == "1")
+    poly = kicadgen.child(kicadgen.child(pad1, "primitives"), "gr_poly")
+    ys = [float(kicadgen.atoms(xy)[1]) for xy in kicadgen.children(kicadgen.child(poly, "pts"), "xy")]
+    lib = kicadgen.load_footprint(QFN28).node
+    lib_pad1 = next(p for p in kicadgen.children(lib, "pad") if p[1] == "1")
+    lib_poly = kicadgen.child(kicadgen.child(lib_pad1, "primitives"), "gr_poly")
+    lib_ys = [float(kicadgen.atoms(xy)[1]) for xy in kicadgen.children(kicadgen.child(lib_poly, "pts"), "xy")]
+    assert ys == [-y for y in lib_ys]
+    d.write(tmp_path)
+    run_cli("drc", tmp_path)
+    report = json.loads((tmp_path / "build" / "drc.json").read_text())
+    clearance = [v for v in report["violations"] if v["type"] == "clearance"]
+    assert clearance == [], clearance

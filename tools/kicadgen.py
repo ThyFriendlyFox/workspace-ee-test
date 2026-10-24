@@ -314,6 +314,27 @@ class Footprint:
         return f"{self.lib}:{self.name}"
 
 
+def _custom_pad_extent(pad: Node, w: float, h: float) -> tuple[float, float]:
+    """Width and height of a custom pad's copper: the anchor and every primitive, stroke included,
+    as a box centred on the pad (the larger side of each axis, so the box covers it all)."""
+    ex, ey = w / 2, h / 2
+    prims = child(pad, "primitives")
+    for prim in prims[1:] if prims else []:
+        if not isinstance(prim, list) or not prim:
+            continue
+        width = child(prim, "width")
+        half = num(atoms(width)[0]) / 2 if width else 0.0
+        pts = [atoms(xy) for xy in children(child(prim, "pts"), "xy")] if child(prim, "pts") else []
+        pts += [atoms(child(prim, head)) for head in ("start", "end", "mid") if child(prim, head)]
+        if prim[0] == "gr_circle" and child(prim, "center") and child(prim, "end"):
+            c, e = atoms(child(prim, "center")), atoms(child(prim, "end"))
+            r = math.hypot(num(e[0]) - num(c[0]), num(e[1]) - num(c[1]))
+            pts = [(num(c[0]) + sx * r, num(c[1]) + sy * r) for sx in (-1, 1) for sy in (-1, 1)]
+        for x, y in ((num(pt[0]), num(pt[1])) for pt in pts):
+            ex, ey = max(ex, abs(x) + half), max(ey, abs(y) + half)
+    return 2 * ex, 2 * ey
+
+
 def load_footprint(lib_id: str, dirs: dict[str, Path] | None = None) -> Footprint:
     """A footprint by `Lib:Name`, from `dirs[Lib]` when the project names that library, else KiCad's."""
     lib, name = lib_id.split(":", 1)
@@ -331,6 +352,9 @@ def load_footprint(lib_id: str, dirs: dict[str, Path] | None = None) -> Footprin
         if drill:
             vals = [a for a in atoms(drill) if a not in ("oval",)]
             drill_d = num(vals[0]) if vals else 0.0
+        w, h = num(size[0]), num(size[1])
+        if str(p[3]) == "custom":  # the copper is the primitives; `size` is only the anchor
+            w, h = _custom_pad_extent(p, w, h)
         pads.append(
             Pad(
                 number=str(p[1]),
@@ -339,8 +363,8 @@ def load_footprint(lib_id: str, dirs: dict[str, Path] | None = None) -> Footprin
                 x=num(at[0]),
                 y=num(at[1]),
                 angle=num(at[2]) if len(at) > 2 else 0.0,
-                w=num(size[0]),
-                h=num(size[1]),
+                w=w,
+                h=h,
                 layers=layers,
                 drill=drill_d,
             )
@@ -1270,6 +1294,14 @@ class Design:
                 "fp_arc",
                 "fp_poly",
                 "pts",
+                # A custom pad's copper: its shapes are in the pad's frame and mirror with it (M38).
+                "primitives",
+                "gr_poly",
+                "gr_line",
+                "gr_rect",
+                "gr_circle",
+                "gr_arc",
+                "gr_curve",
             ):
                 cls._flip(item)
 

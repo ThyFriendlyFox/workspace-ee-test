@@ -355,3 +355,34 @@ charger, or any other load from a battery.
 
 Done when: the host tests cover steps 1, 2, 3 and 5, the mutation run
 catches every mutation, and the cut-off times are in the firmware README.
+
+## P19 — Footprint geometry the generator transforms
+
+When: changing how the generator copies, flips or rotates a footprint, or
+placing a footprint with a pad shape no board here has used (custom pads,
+chamfered rectangles, paste-only apertures).
+
+1. List the footprint's pad shapes and, for a custom pad, its primitive
+   kinds (polygon, line, rectangle, circle, arc).
+2. Place it on the face and at the rotation the board uses, generate the
+   unrouted board and run `workcenter drc .`. A clearance between two pads
+   of one footprint is the generator's bug, never the board's.
+3. Add a test that places the new shape on the bottom face and runs the
+   DRC, and one that reads its pad size as the copper, not the anchor.
+
+Done when: the unrouted board's DRC shows no clearance inside any
+footprint, and the tests for the shape are in the suite.
+
+## P20 — Swapping a part
+
+When: replacing a part with another (a cell, a connector, a regulator, a
+switch) or changing its rating.
+
+1. List every value on the board chosen from the old part's ratings:
+   charge current, current limits and sense ranges, cut-off voltages,
+   fuse ratings, thermal budget, pull values that assume its thresholds.
+2. Recompute each from the new part's datasheet and write the value and
+   the rating it comes from in the project README's BOM or decisions.
+
+Done when: every value on the list cites the new part's rating in the
+README.
