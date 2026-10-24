@@ -235,3 +235,15 @@ What happened: the island stitcher ran once for each zone, and each run read the
 Cost: one red test while adding four-layer boards; no board shipped with it.
 Root cause: a loop over the containers of a thing (zones) where the work is per thing (net), and tests that only ever had one of each.
 Process: P17
+
+## M38 — 2026-10-24 — Custom pads kept their top-face shape on the bottom face
+What happened: the generator mirrors a bottom-face footprint the way KiCad's Flip does, but it walked only the pad's position, not the shapes inside a custom pad. A QFN-28 on the bottom face got its corner pads' chamfers on the wrong side, 0.03 mm from the next pad round the corner; the DRC on the unrouted Last Hit board found four. The generator's pad boxes also read a custom pad as its 0.14 mm anchor, so its own via checks saw almost no copper there.
+Cost: one DRC round; no board shipped with it. Every earlier board had only rectangles, rounded rectangles and circles.
+Root cause: a footprint transform written for the pad shapes in use, never checked against the shapes the libraries also hold.
+Process: P19
+
+## M39 — 2026-10-24 — The charger kept a pouch cell's current for a 320 mAh cell
+What happened: v0.6 swapped v0.5's 600 mAh pouch for a 10440 (about 320 mAh) and kept the charger's 2 kΩ program resistor: 500 mA, about 1.5 C, where 10440 makers give 0.5 C standard and 1 C at most. Found while re-reading the BOM for the 38 mm board.
+Cost: v0.6 at 48.26 mm was published with it; no board was built. The 38 mm board sets 5.1 kΩ, 196 mA.
+Root cause: a part swap that rechecked the part's size and drain rating, not the values other parts took from the old one's ratings.
+Process: P20

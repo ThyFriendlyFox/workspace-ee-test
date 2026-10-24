@@ -27,7 +27,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `workcenter render` adds `board-3d-bottom.png`.
 - `kicadgen`: four-layer (and any even count) boards: `Design.copper_layers` adds `In1.Cu`.. with a 1.6 mm stackup; `Design.plane_layers` gives an inner layer whole to a pour, which the router never sees; through pads and vias carry copper on every routing layer in the DSN; island stitching lands vias on any layer and keeps clear of other nets' copper on the layers a via passes.
 - `docs/CONFIGURATION.md` names the FreeRouting pin that `install.sh` has carried since the 1.9.0 pin (M21).
-- `ee-agent-kit/MISTAKES.md` (every mistake, its cost, its process) and `ee-agent-kit/PROCESSES.md` (binding checklists P1 to P18); `make verify` checks that each mistake names an existing process and each process has a "Done when" line.
+- `ee-agent-kit/MISTAKES.md` (every mistake, its cost, its process) and `ee-agent-kit/PROCESSES.md` (binding checklists P1 to P20); `make verify` checks that each mistake names an existing process and each process has a "Done when" line.
 ### Changed
 - `install.sh` prints apt progress and runs it non-interactively; the KiCad download from the PPA is slow on GitHub runners and a silent step was cancelled as hung.
 - `workcenter render` leaves the fabrication layer out of the 2D top image.
@@ -43,4 +43,5 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - Island stitching after routing keeps its vias out of keepouts; one keepout check (`Design.in_keepout`) now serves both via placers (M30).
 - The router sees a non-plated hole grown to the board-edge clearance the DRC applies to it, not the hole clearance (M33).
 - Island stitching runs once per poured net, not once per zone: a net with two zones got two vias on one spot (M37).
+- A custom pad on the bottom face is mirrored with its shapes, not only its position; its size is read from its shapes, not its anchor (M38).
 ### Security
