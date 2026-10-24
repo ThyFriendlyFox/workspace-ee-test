@@ -62,6 +62,10 @@ project and routes it with FreeRouting. No GUI at any step.
      as `"Name:Footprint"`. Read it with
      `python3 tools/kicadgen.py footprint --lib Name=path Name:Footprint`
      before placing; the generated project gets an `fp-lib-table` for it.
+   - `d.keepout(d.circle(cx, cy, r), layers=("F.Cu",), name="collar")` keeps
+     tracks and vias out of an area (under grounded metal, a mounting
+     screw, an antenna). KiCad gets a rule area, the router a keepout, and
+     the generator's own vias stay out of it.
    - `d.model(ref, "${KIPRJMOD}/models/x.wrl")` gives a part a 3D body for the
      renders and the STEP export when the library has none (vertical
      receptacles, wire pads with a stud). `python3 tools/wrlgen.py` writes
@@ -100,7 +104,11 @@ project and routes it with FreeRouting. No GUI at any step.
      around it. Draw the heavy loop first (battery feed, heater return),
      then the taps and gate drives, one net at a time, with
      `workcenter drc .` between rounds: the DRC names the pad or track
-     each slip touches. End tracks on pad centres.
+     each slip touches. End tracks on pad centres. A part moved in the
+     same change is regenerated and its pads read before its tracks are
+     written. A long hand route is a wall on its layer: list the pads it
+     cuts off from their nets first, and move a part rather than draw a
+     lane that leaves one with no way in.
    - A ground pad cut off from the pour: the design command already
      routes again with a via reserved beside it (`--rounds`); if it still
      reports the island, move the walling track or the part.

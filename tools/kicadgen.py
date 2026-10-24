@@ -382,6 +382,15 @@ def load_footprint(lib_id: str, dirs: dict[str, Path] | None = None) -> Footprin
 POWER_LIB = "power"
 
 
+def _inside_polygon(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
+    """Even-odd point-in-polygon test."""
+    inside = False
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1], strict=True):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
+
+
 def _seg_dist(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
     """Distance from point p to segment ab."""
     (px, py), (ax, ay), (bx, by) = p, a, b
@@ -478,6 +487,7 @@ class Design:
     )  # text, x, y, layer, size, thickness
     rules: dict[str, float] = field(default_factory=dict)  # overrides for board.design_settings.rules
     zones: list[dict] = field(default_factory=list)  # copper pours, see zone()
+    keepouts: list[dict] = field(default_factory=list)  # areas no track or via enters, see keepout()
     islands: list[list[str]] = field(default_factory=list)  # pads cut off from their pour, set by write()
     _symcache: dict[str, Symbol] = field(default_factory=dict, repr=False)
     _fpcache: dict[str, Footprint] = field(default_factory=dict, repr=False)
@@ -859,11 +869,26 @@ class Design:
         boxes: list[PadBox],
         tracks: bool = True,
     ) -> bool:
-        """Clearance check for a via at (vx, vy): board edge, other nets' pads, holes, vias and tracks."""
+        """Clearance check for a via at (vx, vy): board edge, other nets' pads, holes, vias and tracks.
+
+        A non-plated hole is board edge to the DRC: the via's copper keeps `edge_clearance` from the
+        hole's outline (its box, which covers an oval peg), whatever the net.
+        """
         if not self.inside_outline(vx, vy, self.edge_clearance + r):
             return False
+        for k in self.keepouts:  # a via spans every layer, so any keepout refuses it
+            poly = k["polygon"]
+            edges = zip(poly, poly[1:] + poly[:1], strict=True)
+            if _inside_polygon(vx, vy, poly) or min(_seg_dist((vx, vy), a, b) for a, b in edges) < r:
+                return False
         c = self.clearance
         for pad in boxes:
+            if pad.kind == "np_thru_hole":
+                dx = max(pad.x1 - vx, 0.0, vx - pad.x2)
+                dy = max(pad.y1 - vy, 0.0, vy - pad.y2)
+                if math.hypot(dx, dy) < max(r + self.edge_clearance, drill / 2 + 0.25):
+                    return False
+                continue
             if (
                 pad.drill
                 and math.hypot(vx - (pad.x1 + pad.x2) / 2, vy - (pad.y1 + pad.y2) / 2)
@@ -883,6 +908,38 @@ class Design:
             if tracks and n != pcb_net and _seg_dist((vx, vy), (sx, sy), (ex, ey)) < r + w / 2 + c:
                 return False
         return True
+
+    def keepout(
+        self, polygon: list[tuple[float, float]], layers: tuple[str, ...] = ("F.Cu",), name: str = ""
+    ) -> None:
+        """An area no track or via may enter on `layers` (a metal shell sitting on the board).
+
+        Pads and pours may: a ground pour under a grounded shell is what the area is for. KiCad gets a
+        rule area, the router a Specctra keepout, and the generator's own via checks honour it.
+        """
+        for layer in layers:
+            if layer not in ("F.Cu", "B.Cu"):
+                raise ValueError(f"keepout layer must be F.Cu or B.Cu, not {layer!r}")
+        if len(polygon) < 3:
+            raise ValueError("keepout needs a polygon of at least 3 points")
+        self.keepouts.append(
+            {
+                "polygon": [(float(x), float(y)) for x, y in polygon],
+                "layers": tuple(layers),
+                "name": name or f"keepout{len(self.keepouts) + 1}",
+            }
+        )
+
+    @staticmethod
+    def circle(cx: float, cy: float, r: float, n: int = 24) -> list[tuple[float, float]]:
+        """A circle as an `n`-sided polygon, for keepouts and zones."""
+        return [
+            (
+                round(cx + r * math.cos(2 * math.pi * i / n), 4),
+                round(cy + r * math.sin(2 * math.pi * i / n), 4),
+            )
+            for i in range(n)
+        ]
 
     def zone(
         self,
@@ -1482,6 +1539,31 @@ class Design:
                     ["polygon", ["pts", *[["xy", fmt(px), fmt(py)] for px, py in z["polygon"]]]],
                 ]
             )
+        for i, k in enumerate(self.keepouts):
+            pcb.append(
+                [
+                    "zone",
+                    ["net", "0"],
+                    ["net_name", Q("")],
+                    ["layers", *[Q(layer) for layer in k["layers"]]],
+                    ["uuid", uid(ns, f"keepout/{i}")],
+                    ["name", Q(k["name"])],
+                    ["hatch", "edge", "0.5"],
+                    ["connect_pads", ["clearance", "0"]],
+                    ["min_thickness", "0.25"],
+                    ["filled_areas_thickness", "no"],
+                    [
+                        "keepout",
+                        ["tracks", "not_allowed"],
+                        ["vias", "not_allowed"],
+                        ["pads", "allowed"],
+                        ["copperpour", "allowed"],
+                        ["footprints", "allowed"],
+                    ],
+                    ["fill", ["thermal_gap", "0.5"], ["thermal_bridge_width", "0.5"]],
+                    ["polygon", ["pts", *[["xy", fmt(px), fmt(py)] for px, py in k["polygon"]]]],
+                ]
+            )
         pcb.append(["embedded_fonts", "no"])
         return dumps(pcb) + "\n"
 
@@ -1729,6 +1811,13 @@ class Design:
             for z in self.zones
             for layer in z["layers"]
         ]
+        keepouts = [
+            f'    (keepout "{k["name"]}" (polygon {layer} 0 '
+            + " ".join(f"{c(px)} {c(-py)}" for px, py in k["polygon"])
+            + "))"
+            for k in self.keepouts
+            for layer in k["layers"]
+        ]
         return "\n".join(
             [
                 f'(pcb "{self.name}.dsn"',
@@ -1742,6 +1831,7 @@ class Design:
                 boundary,
                 "    )",
                 *planes,
+                *keepouts,
                 *[f'    (via "{n}")' for n in vias],
                 f"    (rule (width {c(self.track_width)}) (clearance {c(self.clearance)}) "
                 f"(clearance {c(self.clearance)} (type default_smd)) (clearance {c(self.clearance / 2)} (type smd_smd)))",

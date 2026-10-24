@@ -507,3 +507,54 @@ def test_wrlgen_510_presets_have_an_internal_thread_and_glass(tmp_path):
     assert "transparency 0.60" in out.read_text()  # the glass tank shows the oil
     for preset in ("connector-510", "cartridge-510", "pouch-cell", "display-module"):
         assert wrlgen.main([preset, str(tmp_path / f"{preset}.wrl")]) == 0
+
+
+@needs_libs
+def test_via_check_treats_a_non_plated_hole_as_board_edge():
+    """A stitching via beside a USB-C receptacle's plastic peg: the DRC wants edge clearance from the
+    peg's hole (M26), not just hole-to-hole spacing."""
+    d = divider()
+    d.add(
+        "J5",
+        "Connector:USB_C_Receptacle_USB2.0_16P",
+        "USB-C",
+        "Connector_USB:USB_C_Receptacle_G-Switch_GT-USB-7051x",
+        sch_at=(50.8, 76.2),
+        pcb_at=(105.0, 105.0),
+        pcb_rot=90,
+        pcb_layer="B.Cu",
+        nets={"A1": "GND", "B1": "GND", "A12": "GND", "B12": "GND", "SH": "GND"},
+    )
+    boxes = d.pad_boxes()
+    peg = next(b for b in boxes if b.ref == "J5" and b.kind == "np_thru_hole" and b.y2 < 105.0)
+    cy = (peg.y1 + peg.y2) / 2
+    near = peg.x2 + 0.3 + 0.2  # the via's copper 0.2 mm from the hole: inside the 0.3 mm edge clearance
+    clear = peg.x2 + 0.3 + 0.35
+    assert not d._via_fits(near, cy, 0.3, 0.3, "GND", boxes, tracks=False)
+    assert d._via_fits(clear, cy, 0.3, 0.3, "GND", boxes, tracks=False)
+
+
+@needs_libs
+@needs_kicad
+def test_keepout_reaches_kicad_the_router_and_the_via_check(tmp_path):
+    d = divider()
+    area = kicadgen.Design.circle(106.0, 108.5, 1.2)
+    d.keepout(area, layers=("F.Cu",), name="shell")
+    board = d.board()
+    assert '(name "shell")' in board and "(tracks not_allowed)" in board and "(copperpour allowed)" in board
+    assert '(keepout "shell" (polygon F.Cu 0 ' in d.dsn()
+    boxes = d.pad_boxes()
+    assert not d._via_fits(106.0, 108.5, 0.3, 0.3, "GND", boxes, tracks=False)  # inside
+    assert not d._via_fits(
+        106.0, 108.5 - 1.2 - 0.2, 0.3, 0.3, "GND", boxes, tracks=False
+    )  # copper over the edge
+    assert d._via_fits(106.0, 108.5 - 1.2 - 0.4, 0.3, 0.3, "GND", boxes, tracks=False)  # clear of it
+    with pytest.raises(ValueError):
+        d.keepout(area, layers=("F.SilkS",))
+    d.track("OUT", [(104.0, 108.5), (108.0, 108.5)], "F.Cu")  # straight through the area
+    d.write(tmp_path)
+    code, gates = run_cli("drc", tmp_path)
+    drc = next(g for g in gates if g["gate"] == "drc")
+    report = json.loads((tmp_path / "build" / "drc.json").read_text())
+    kinds = {v["type"] for v in report["violations"]}
+    assert "items_not_allowed" in kinds, (drc, kinds)  # KiCad read the zone as a keepout

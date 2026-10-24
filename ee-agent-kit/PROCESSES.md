@@ -22,7 +22,9 @@ must clear or land on a pad.
    shield, mounting holes).
 2. Generate the unrouted board and run `workcenter drc .`. The report
    names each pad with its board position. Those positions are the only
-   source for a coordinate; never a position computed in your head.
+   source for a coordinate; never a position computed in your head. A
+   part moved in the same change is regenerated and its pads read after
+   the move; its tracks are never written in the edit that moves it.
 3. A part on `B.Cu` is mirrored about the X axis: at rotation 0 its pad 1
    is on the left and its pads' y are flipped. Confirm against the DRC
    report, every time.
@@ -170,8 +172,11 @@ Edit tool.
    first half and fails on the second leaves a file nobody has read.
 4. A change of a few lines goes through the Edit tool after a Read.
 5. Inside a quoted heredoc (`<<'EOF'`) the shell passes text through as
-   written: write escapes for the language that reads them, or avoid them
-   (`chr(10)`, real line breaks in a triple-quoted string).
+   written. Write no backslash escapes in it at all: `chr(10)` for a line
+   break, real line breaks inside a triple-quoted string.
+6. Tests are written with the Write or Edit tool, not appended by a
+   script, and read back before they run: every assertion must be able
+   to fail.
 
 Done when: the script reported every anchor found, and the formatter and
 linter pass on the result.
@@ -202,6 +207,10 @@ reservations, or part spacing in a design to help the router.
 3. Adopt only what reduces the open items; revert the rest even when it
    looked right.
 4. Record the numbers in the commit message.
+5. A hand-routed track is a wall on its layer. Before drawing one longer
+   than three pad pitches, list the pads on each side of it whose nets
+   must cross it. If one of them cannot cross on the other layer, move a
+   part instead of drawing the lane.
 
 Done when: the commit says what was measured and the number went down.
 
@@ -293,3 +302,19 @@ When: choosing or changing which MCU pin carries which signal.
 Done when: the README's pin table names the function of every used pin,
 the shared-resource checks are written next to it, and the firmware that
 configures those pins compiles.
+
+## P17 — Copper the tools add
+
+When: changing code in the workcenter that places copper on its own
+(stitching vias, reserved vias, generated tracks or pours).
+
+1. List every DRC rule that applies to that copper: copper to copper by
+   net, hole to hole, copper to board edge, and non-plated holes, which
+   the DRC treats as board edge.
+2. The placement check covers each rule with the same numbers the board's
+   design rules use, read from the `Design`, not typed again.
+3. One test per rule: place the copper just inside and just outside each
+   kind of obstacle and expect refused and accepted.
+
+Done when: every rule on the list has a test, and a routed board with the
+change passes the DRC with no item placed by the tool.
