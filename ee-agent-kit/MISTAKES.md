@@ -133,3 +133,15 @@ What happened: the verify run for M19 never ran (`cd` in a backgrounded command 
 Cost: a second verify run and this entry; no red CI, because the change was documentation and the kit checks passed afterwards.
 Root cause: the push was chained behind reading a log instead of behind the verify's own verdict, and a relative working directory was trusted in a background shell.
 Process: P14
+
+## M21 — 2026-10-24 — The configuration table kept the old engine version
+What happened: `docs/CONFIGURATION.md` still said `FREEROUTING_VERSION` defaults to 2.1.0 a day after `install.sh` pinned 1.9.0 (M5). Found while adding a table for a new tool.
+Cost: a wrong number in a reference document for a day; one line to fix.
+Root cause: the pin's process named the landmine map, the CHANGELOG and ENGINES.md, but not the configuration table that repeats the default.
+Process: P6
+
+## M22 — 2026-10-24 — A `cd && ...` chain ran in the wrong directory again
+What happened: a documentation edit command started with `cd repo && ls ... && python3 ...`; a parallel tool call reset the shell's working directory between the `cd` and the `ls`, the `ls` failed, the chain stopped, and the edits silently did not happen. Same mechanism as M20.
+Cost: one lost command and the diagnosis that explains M20: parallel tool calls share one shell, so `cd` is a race.
+Root cause: `cd` used at all. P8 said absolute paths and still allowed a leading `cd`.
+Process: P8

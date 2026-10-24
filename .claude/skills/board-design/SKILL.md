@@ -52,6 +52,16 @@ project and routes it with FreeRouting. No GUI at any step.
      bottom-left, source top-left, drain right. Read positions from a DRC
      report (`workcenter drc`) rather than from memory before hand-routing
      to a back-side pad.
+   - `corner_radius=` on `Design` rounds the board corners; the outline becomes
+     four lines and four arcs, the router's boundary and the default pour
+     follow them, and the via check knows the corners. Pads near a corner
+     need `edge_clearance` from the arc, not from the rectangle.
+   - `d.model(ref, "${KIPRJMOD}/models/x.wrl")` gives a part a 3D body for the
+     renders and the STEP export when the library has none (vertical
+     receptacles, wire pads with a stud). `python3 tools/wrlgen.py` writes
+     parametric bodies (`usb-c-vertical`, `threaded-stud`) in KiCad's VRML
+     units; keep them in the project under `models/` with the command that
+     made them.
    - `d.text(label, x, y, "F.SilkS", size, thickness)` for contact labels.
      Below 0.8 mm text, set `d.rules = {"min_text_height": ..,
      "min_text_thickness": ..}` or the DRC flags every label.
@@ -89,7 +99,8 @@ project and routes it with FreeRouting. No GUI at any step.
      routes again with a via reserved beside it (`--rounds`); if it still
      reports the island, move the walling track or the part.
 6. **Gates.** `workcenter gates .` until GREEN. `workcenter render .` for
-   the images. Commit `design.py` and the generated `.kicad_*` files
+   the images: schematic, both faces, 3D top, bottom and isometric. Commit
+   `design.py`, any `models/*.wrl`, and the generated `.kicad_*` files
    together; the generated files are what KiCad opens.
 
 ## Checks
