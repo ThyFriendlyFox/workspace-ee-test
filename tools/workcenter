@@ -601,6 +601,19 @@ def cmd_design(args) -> int:
     return code
 
 
+USER_SETTINGS = Path.home() / ".claude" / "settings.json"
+
+
+def no_cd_hook_installed(settings: Path = USER_SETTINGS) -> bool:
+    """True when the user-wide Claude Code settings run the no-cd hook (install.sh puts it there, M35)."""
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    entries = data.get("hooks", {}).get("PreToolUse", []) if isinstance(data, dict) else []
+    return any("no_cd.py" in h.get("command", "") for e in entries for h in e.get("hooks", []))
+
+
 def cmd_doctor(args) -> int:
     kicad = tool_version([KICAD_CLI, "version"])
     ngspice = tool_version([NGSPICE, "--version"], r"(?<=ngspice-)\d+")
@@ -629,6 +642,7 @@ def cmd_doctor(args) -> int:
             "ok": (SRC_DIR / "WORKCENTER.md").is_file(),
             "path": str(SRC_DIR / "WORKCENTER.md"),
         },
+        "no-cd hook": {"required": False, "ok": no_cd_hook_installed(), "path": str(USER_SETTINGS)},
     }
     missing_required = [k for k, v in checks.items() if v["required"] and not v["ok"]]
     degraded = [k for k, v in checks.items() if not v["required"] and not v["ok"]]

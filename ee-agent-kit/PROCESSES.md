@@ -149,7 +149,12 @@ When: every shell command.
    `cd X && ...` chain stops or runs in the wrong repository. Use
    `make -C`, `git -C`, `python3 /abs/script.py`, and absolute paths in
    every heredoc. In this repository a PreToolUse hook
-   (`tools/hooks/no_cd.py`) refuses a Bash command that runs `cd`.
+   (`tools/hooks/no_cd.py`) refuses a Bash command that runs `cd`. A
+   session opened outside this repository does not load it: check
+   `workcenter doctor` for the "no-cd hook" line, and where it is absent,
+   ask the human whether to install it user-wide
+   (`python3 tools/hooks/install_hooks.py`); never write their settings
+   unasked.
 2. `--help` before a flag you have not used in this session. Global
    flags such as `--json` go before the subcommand.
 3. `pkill -x name`, never `pkill -f` with a pattern that matches the
