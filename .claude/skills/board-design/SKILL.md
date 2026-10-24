@@ -154,7 +154,8 @@ project and routes it with FreeRouting. No GUI at any step.
 6. **Gates.** `workcenter gates .` until GREEN. `workcenter render .` for
    the images: schematic, both faces, 3D top, bottom and isometric, and every
    layer on its own (`layers/`, `layers.png`); `--views spin` adds a GIF of
-   the 3D board turning round. Commit
+   the 3D board turning round, which a finished version carries for every
+   board and its assembly (`PROCESSES.md` P23). Commit
    `design.py`, any `models/*.wrl`, and the generated `.kicad_*` files
    together; the generated files are what KiCad opens.
 

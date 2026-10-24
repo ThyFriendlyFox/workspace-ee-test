@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -169,6 +170,17 @@ def test_autoroute_without_dsn_skips_loudly(tmp_path):
     assert record["status"] == "skip"
     assert code == 2
     assert "DSN" in record["summary"] or "engine missing" in record["summary"]
+
+
+def test_every_cli_flag_is_in_the_configuration_table():
+    """P10 step 4: each flag a command line takes has its row in docs/CONFIGURATION.md (M50).
+    argparse flags, and kicadgen's, which it compares by hand (`a == "--lib"`)."""
+    doc = (ROOT / "ee-agent-kit" / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")
+    flag = re.compile(r'(?:add_argument\(\s*|\ba == )"(--[a-z0-9-]+)"')
+    for tool in ("tools/workcenter", "tools/kicadgen.py", "tools/wrlgen.py", "tools/hooks/install_hooks.py"):
+        flags = set(flag.findall((ROOT / tool).read_text(encoding="utf-8")))
+        assert flags, f"{tool}: no flags found; the pattern no longer matches its parser"
+        assert sorted(f for f in flags if f"`{f}" not in doc) == [], tool
 
 
 # ------------------------------------------------------------- render

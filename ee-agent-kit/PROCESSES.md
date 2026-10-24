@@ -226,7 +226,9 @@ When: touching `tools/workcenter` or `tools/kicadgen.py`'s command line.
    (`gates.json`).
 2. The `--help` text says what the command writes and where.
 3. One test per exit code and one per written file.
-4. `docs/CONFIGURATION.md` gets the new flag in the same PR.
+4. `docs/CONFIGURATION.md` gets the new flag in the same PR, in its
+   command's table; `test_every_cli_flag_is_in_the_configuration_table`
+   fails the PR when a flag has no row (M50).
 
 Done when: `make verify` is green and the configuration table names the
 flag.
@@ -301,7 +303,8 @@ When: a change is about to be called done.
 3. Push, then confirm the remote holds it: `git ls-remote`.
 4. Watch CI to the end; red CI is work now, not later.
 5. The report names the commit, the run link, and the numbers from the
-   gate report; a skipped or blocked part is named as such.
+   gate report; a skipped or blocked part is named as such. A board
+   version's report carries its pictures (P23).
 
 Done when: the remote has the commit, its CI run is green, and the report
 has been sent.
@@ -466,3 +469,31 @@ before the first edit of a request.
 Done when: the request's edits sit only in the new folder, the previous
 folder matches its commit but for the banner, and the index and CLAUDE.md
 name the new version.
+
+## P23 — Pictures of a finished board version
+
+When: a board version's gates are GREEN and P14's close-out is next; again
+after any change to what the boards look like in that version.
+
+1. `workcenter render <board>` for every board of the version: the stills
+   and every layer (`build/render/layers/`, `build/render/layers.png`).
+2. A turning GIF of every board, `workcenter render <board> --views spin`,
+   seen from the face that carries the parts; a board with parts on both
+   faces gets one from above and one from below (`--spin-tilt -125`, with
+   its own `--out` so the first is kept). An assembly gets its own, made by
+   the project's assembly script so it is redrawn with the stills, with
+   `--spin-zoom` and `--spin-pivot` set so its tallest part stays in frame.
+3. Check the framing before keeping a GIF. The frames at 0, 90, 180 and
+   270 degrees decide it, the end-on ones crop first: try with
+   `--spin-frames 4` (under half a minute) and lower `--spin-zoom` until
+   all four are whole.
+4. Copy the layer sheet, the layer images and the GIFs into the version's
+   `docs/`. The README shows the GIFs beside the stills and the layer
+   sheets, and names each command with its tilt, zoom and pivot, so the
+   next version draws them the same way.
+5. Send the GIFs and the layer sheets with the report.
+
+Done when: the version's `docs/` holds a layer sheet and a turning GIF for
+every board and for the assembly, all four test frames of each GIF whole,
+the README shows them and names their commands, and the report carried
+them.

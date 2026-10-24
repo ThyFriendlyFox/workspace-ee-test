@@ -32,11 +32,21 @@ unset variable never causes a failure.
 | Flag | Commands | Default | Use |
 |---|---|---|---|
 | `--json` | all | off | Machine-readable output. |
-| `--out DIR` | gates, erc, drc, sim, export, autoroute | `<project>/build` | Where reports and artifacts go. |
+| `--out DIR` | gates, erc, drc, sim, export, autoroute, render; design | `<project>/build`; design: the design file's folder | Where reports and artifacts go; for design, where the KiCad project is written. |
 | `--strict` | gates, erc, drc, sim, export | off | Warnings fail the gate. |
 | `--step` | gates, export | off | Also export a STEP model. |
 | `--dsn FILE` | autoroute | `<project>/<name>.dsn`, then `build/route/<name>.dsn` | Specctra DSN exported from KiCad. Absent means the command skips. |
 | `--passes N` | autoroute, design | `20` autoroute, `60` design | FreeRouting optimisation passes. |
+| `--threads N` | autoroute | engine default | FreeRouting thread count. |
+| `--timeout S` | autoroute, design | `600` autoroute, `900` design | Kill the router after S seconds. |
+| `--route` | design | off | Export the DSN, run FreeRouting, merge the session before writing. |
+| `--rounds N` | design | `4` | Route again, up to N rounds, with a via reserved beside each pad a pour lost. |
+| `--width PX` | render | `1600` | Image width; the schematic PNG is twice that, the GIF's frames at most 640. |
+| `--views LIST` | render | `schematic,2d,3d,layers` | What to draw, comma-separated, from `schematic`, `2d`, `3d`, `layers`, `spin`, or `all`. `layers` writes `render/layers/<layer>.png` for each layer with something on it and `render/layers.png`; `spin` writes `render/board-spin.gif`. |
+| `--spin-frames N` | render | `36` | Frames in the turning GIF, 12 a second. |
+| `--spin-tilt DEG` | render | `-55` | The GIF's tilt about the board's x axis (kicad-cli `--rotate x`): `-55` looks down at the top face, `-125` up at the bottom face. |
+| `--spin-zoom Z` | render | `1.0` | The GIF's zoom; below 1 keeps long or tall parts in frame end-on. |
+| `--spin-pivot X,Y,Z` | render | none | The GIF's pivot, in cm from the board's centre (kicad-cli `--pivot`); raise Z to the middle of a tall assembly. |
 
 ## `tools/wrlgen.py`
 
@@ -57,10 +67,6 @@ Every number is millimetres; the file is written in KiCad's VRML unit (0.1 inch)
 |---|---|---|
 | `pins LIB:SYMBOL...` | | Pin numbers, names, types and positions of library symbols. |
 | `footprint LIB:FOOTPRINT...` | `--lib NAME=DIR` (repeatable) | Pads, layers, drills and courtyard; `--lib` reads a project `.pretty` folder. |
-| `--threads N` | autoroute | engine default | FreeRouting thread count. |
-| `--timeout S` | autoroute, design | `600` autoroute, `900` design | Kill the router after S seconds. |
-| `--route` | design | off | Export the DSN, run FreeRouting, merge the session before writing. |
-| `--width PX` | render | `1600` | Image width; the schematic PNG is twice that. |
 
 ## `tools/kicadgen.py`
 
