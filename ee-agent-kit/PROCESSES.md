@@ -273,7 +273,10 @@ reason you caused, or you had to redo work.
 1. Add an entry to `MISTAKES.md` in the same PR as the fix, in the entry
    shape: what happened, what it cost, the root cause, `Process: P<n>`.
 2. Point at the process that prevents it. If none does, add one here or
-   extend one, with a "Done when" line.
+   extend one, with a "Done when" line. Walk a new or changed process
+   through the case that caused it, step by step, before the PR: each step
+   must be one that case can follow and each check one it passes. Two
+   steps that cannot both hold are a mistake in the process.
 3. If a machine can check the process, add the check to
    `verify/verify.sh` or a test in the same PR.
 4. If the cause is the environment (a tool, a proxy, a runner), add a row
@@ -457,8 +460,9 @@ before the first edit of a request.
 3. In the new folder, the README banner names the version it came from; the
    series index gets a row; the project's CLAUDE.md names the new version
    as the one in work.
-4. `git status --short <previous version>/` prints nothing.
+4. `git diff --stat <its last commit> -- <previous version>/` shows one
+   file, its README, with one line changed: the banner of step 2.
 
 Done when: the request's edits sit only in the new folder, the previous
-folder matches its commit, and the index and CLAUDE.md name the new
-version.
+folder matches its commit but for the banner, and the index and CLAUDE.md
+name the new version.
