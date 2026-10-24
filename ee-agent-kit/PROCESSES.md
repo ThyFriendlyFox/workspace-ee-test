@@ -139,7 +139,9 @@ written next to it.
 When: every shell command.
 
 1. Absolute paths. The working directory drifts between commands in this
-   environment; a relative path lands files in the wrong repository.
+   environment; a relative path lands files in the wrong repository, and a
+   `cd` inside a backgrounded command may not take at all (`make -C`,
+   `git -C`, `python3 /abs/path`).
 2. `--help` before a flag you have not used in this session. Global
    flags such as `--json` go before the subcommand.
 3. `pkill -x name`, never `pkill -f` with a pattern that matches the
@@ -233,10 +235,32 @@ names has a "Done when" line.
 When: a change is about to be called done.
 
 1. `make verify` green locally; for a board, `workcenter gates .` GREEN.
-2. Push, then confirm the remote holds it: `git ls-remote`.
-3. Watch CI to the end; red CI is work now, not later.
-4. The report names the commit, the run link, and the numbers from the
+   Run it with an absolute path (`make -C /path verify`), never behind a
+   `cd`, and in the background with a log.
+2. Chain the commit and the push behind the verdict itself, never behind
+   a look at the log: `grep -q 'VERIFY GREEN' log && git push ...`. A
+   `tail` succeeds whatever the log says.
+3. Push, then confirm the remote holds it: `git ls-remote`.
+4. Watch CI to the end; red CI is work now, not later.
+5. The report names the commit, the run link, and the numbers from the
    gate report; a skipped or blocked part is named as such.
 
 Done when: the remote has the commit, its CI run is green, and the report
 has been sent.
+
+## P15 — A question that reveals a mismatch
+
+When: a human asks whether the work is a certain way (an orientation, a
+size, a part, a behaviour) and the honest answer is that it is not.
+
+1. Answer the question in one sentence.
+2. Name the mismatch as a decision: what the design does now, what the
+   question assumed, what changing it costs and touches.
+3. If the change is reversible and inside the task's scope (a board
+   revision, a document, a tool default), do it in the same turn and say
+   so. Ask first only when it widens the scope or spends real money.
+4. Never close with "that would be a vN change" and no owner. The reply
+   carries either the change or an explicit question.
+
+Done when: the reply holds the answer and either the finished change or a
+direct question, and nothing is left as a note for later.
