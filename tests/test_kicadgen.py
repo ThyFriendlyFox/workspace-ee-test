@@ -342,6 +342,60 @@ def test_write_fills_the_pour_and_stitches_a_walled_off_pad(tmp_path):
     }
 
 
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("cd /home/user/repo && ls", True),
+        ("ls; cd build", True),
+        ("(cd tools && make)", True),
+        ("echo start\ncd /tmp", True),
+        ("make -C /home/user/repo verify", False),
+        ("git -C /home/user/repo status", False),
+        ("ls /tmp/abcd /tmp/cd-rom", False),
+    ],
+)
+def test_hook_refuses_a_bash_command_that_runs_cd(command, blocked):
+    """P8 as a machine check (M31): the PreToolUse hook exits 2, which blocks the call."""
+    hook = ROOT / "tools" / "hooks" / "no_cd.py"
+    call = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    proc = subprocess.run(
+        [sys.executable, str(hook)], input=call, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == (2 if blocked else 0), (command, proc.stderr)
+    other = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/x"}})
+    assert subprocess.run([sys.executable, str(hook)], input=other, text=True, check=False).returncode == 0
+
+
+@needs_libs
+@needs_kicad
+def test_island_stitching_keeps_its_vias_out_of_keepouts(tmp_path):
+    """The walled-off pad above with a keepout over its whole island: the only spots for a stitching
+    via are forbidden, so the island is left to the DRC instead of a via under a grounded shell (M30)."""
+    pytest.importorskip("pcbnew")
+    d = poured_divider()
+    d.track("VIN", [(103.0, 102.5), (107.675, 102.5)], "F.Cu")
+    d.track("OUT", [(103.0, 105.04), (106.5, 105.04), (107.675, 106.5)], "F.Cu")
+    d.track("OUT", [(109.325, 102.5), (109.325, 103.8), (110.3, 104.6), (110.3, 105.5)], "F.Cu")
+    d.track(
+        "OUT",
+        [
+            (107.675, 106.5),
+            (108.4, 106.5),
+            (108.4, 105.5),
+            (110.3, 105.5),
+            (110.3, 107.5),
+            (108.4, 107.5),
+            (108.4, 106.5),
+        ],
+        "F.Cu",
+    )
+    d.keepout(kicadgen.Design.circle(109.35, 106.5, 1.6), layers=("F.Cu",), name="shell")
+    d.write(tmp_path)
+    gnd_vias = [v for v in d.vias if v[0] == "GND"]
+    assert not any(d.in_keepout(x, y, size / 2) for _, (x, y), size, _ in gnd_vias), gnd_vias
+    assert d.islands, "the walled-off pad must be reported when no via may land in its island"
+
+
 @needs_libs
 @needs_kicad
 @needs_router
@@ -532,6 +586,28 @@ def test_via_check_treats_a_non_plated_hole_as_board_edge():
     clear = peg.x2 + 0.3 + 0.35
     assert not d._via_fits(near, cy, 0.3, 0.3, "GND", boxes, tracks=False)
     assert d._via_fits(clear, cy, 0.3, 0.3, "GND", boxes, tracks=False)
+
+
+@needs_libs
+def test_router_keeps_edge_clearance_from_a_non_plated_hole():
+    """The router sees a non-plated hole grown to the board-edge clearance the DRC applies to it (M33):
+    the receptacle's 0.66 mm peg hole becomes a 0.66 + 2 x (0.3 - 0.2) mm obstacle, not 0.76."""
+    d = divider()
+    d.add(
+        "J5",
+        "Connector:USB_C_Receptacle_USB2.0_16P",
+        "USB-C",
+        "Connector_USB:USB_C_Receptacle_G-Switch_GT-USB-7051x",
+        sch_at=(50.8, 76.2),
+        pcb_at=(105.0, 105.0),
+        pcb_rot=90,
+        pcb_layer="B.Cu",
+        nets={"A1": "GND", "B1": "GND", "A12": "GND", "B12": "GND", "SH": "GND"},
+    )
+    assert d.edge_clearance == 0.3 and d.clearance == 0.2
+    dsn = d.dsn()
+    assert 'Pad_circle_0.86x0.86_TH "NPTH0"' in dsn, [ln for ln in dsn.splitlines() if "NPTH" in ln]
+    assert "Pad_circle_0.76x0.76_TH" not in dsn
 
 
 @needs_libs

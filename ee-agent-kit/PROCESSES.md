@@ -148,7 +148,8 @@ When: every shell command.
    `cd` in one command is undone by the next without an error: a
    `cd X && ...` chain stops or runs in the wrong repository. Use
    `make -C`, `git -C`, `python3 /abs/script.py`, and absolute paths in
-   every heredoc.
+   every heredoc. In this repository a PreToolUse hook
+   (`tools/hooks/no_cd.py`) refuses a Bash command that runs `cd`.
 2. `--help` before a flag you have not used in this session. Global
    flags such as `--json` go before the subcommand.
 3. `pkill -x name`, never `pkill -f` with a pattern that matches the
@@ -256,7 +257,9 @@ When: a change is about to be called done.
    `cd`, and in the background with a log.
 2. Chain the commit and the push behind the verdict itself, never behind
    a look at the log: `grep -q 'VERIFY GREEN' log && git push ...`. A
-   `tail` succeeds whatever the log says.
+   `tail` succeeds whatever the log says. Every check you run before a
+   push is in the chain (`ruff check ... && make test && git push`); a
+   check whose result only prints is not a gate.
 3. Push, then confirm the remote holds it: `git ls-remote`.
 4. Watch CI to the end; red CI is work now, not later.
 5. The report names the commit, the run link, and the numbers from the
@@ -308,13 +311,38 @@ configures those pins compiles.
 When: changing code in the workcenter that places copper on its own
 (stitching vias, reserved vias, generated tracks or pours).
 
-1. List every DRC rule that applies to that copper: copper to copper by
-   net, hole to hole, copper to board edge, and non-plated holes, which
-   the DRC treats as board edge.
-2. The placement check covers each rule with the same numbers the board's
-   design rules use, read from the `Design`, not typed again.
-3. One test per rule: place the copper just inside and just outside each
-   kind of obstacle and expect refused and accepted.
+1. List every code path that places that copper: grep the generator for
+   every place a via or track is appended (stitching and reserved vias
+   before routing, island stitching after it, generated tracks), and the
+   obstacles the DSN gives the router, whose tracks are copper the tool
+   chain adds too.
+2. List every DRC rule that applies to that copper: copper to copper by
+   net, hole to hole, copper to board edge, non-plated holes, which the
+   DRC treats as board edge, and keepouts.
+3. Each rule is one check, with the same numbers the board's design rules
+   use, read from the `Design`, not typed again; every path from step 1
+   calls it.
+4. One test per rule and per path: place the copper just inside and just
+   outside each kind of obstacle and expect refused and accepted.
 
 Done when: every rule on the list has a test, and a routed board with the
 change passes the DRC with no item placed by the tool.
+
+## P18 — Firmware that drives power
+
+When: writing or changing firmware that switches a heater, a motor, a
+charger, or any other load from a battery.
+
+1. For every safety cut-off, write down the worst-case time from the fault
+   to the cut, and test it against a fake timer on the host.
+2. Every retry has a limit and a give-up state; a dead peripheral must not
+   keep the MCU awake or the load on.
+3. Every elapsed-time comparison is wrap-safe (subtract, then compare),
+   and a test runs the counter across its wrap.
+4. Prove the tests can fail: break each safety behaviour once (a mutation
+   script kept with the firmware) and see a named test fail.
+5. Every output that drives a load is off at reset, in every fault
+   handler, and when the loop that commands it stops (a deadman).
+
+Done when: the host tests cover steps 1, 2, 3 and 5, the mutation run
+catches every mutation, and the cut-off times are in the firmware README.

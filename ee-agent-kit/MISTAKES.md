@@ -187,3 +187,33 @@ What happened: on Last Hit v0.5 a 3.3 V lane drawn 8 mm across the top face abov
 Cost: three routing runs and a re-placement of the regulator, which is what fixed it.
 Root cause: a long hand route treated as a local fix; on two layers a track is a wall for every net on its layer that has to cross it.
 Process: P11
+
+## M30 — 2026-10-24 — Keepouts checked by one of the two via placers
+What happened: PR #12 taught `_via_fits` (stitching and reserved vias before routing) to refuse a via in a keepout, but the island stitcher that runs after routing (`stitch_zones`, `_via_spot`) has its own placement and was not touched. On Last Hit v0.6's first route it put two ground vias under cartridge A's collar, and the DRC flagged both.
+Cost: a red DRC on the first v0.6 route and a second workcenter PR.
+Root cause: P17's rules were checked in the function being edited, not in every code path that places the same copper.
+Process: P17
+
+## M31 — 2026-10-24 — A `cd` in a command, a fourth time
+What happened: a pytest command started with `cd /home/user/workspace-ee-test;`, against P8. Nothing ran in the wrong place this time, but the session's working directory moved.
+Cost: none this time; the same slip cost lost edits in M20 and M22.
+Root cause: P8 was a rule only the agent checked.
+Process: P8
+
+## M32 — 2026-10-24 — Firmware draft bugs, and tests that could not fail
+What happened: the first draft of Last Hit's firmware let a shorted coil run for up to 2 ms before the overcurrent cut (the PWM period was not restarted when a channel turned on), retried a dead display forever (keeping the MCU awake), and would have lit the display again after about 25 days idle (a millisecond comparison across the counter's wrap). Three test checks could never fail. All were found before hand-off: the bugs in review, the checks by breaking the code on purpose (29 mutations, each caught by a named test).
+Cost: rework inside the firmware task; none of it shipped.
+Root cause: no checklist for the failures embedded code repeats (the exposure window of a safety cut, unbounded retries, counter wrap), and tests not proven able to fail.
+Process: P18
+
+## M33 — 2026-10-24 — The router's model of a non-plated hole used the wrong clearance
+What happened: the DSN writer grew each non-plated hole by the 0.25 mm hole clearance, but the DRC treats such a hole as board edge and wants the 0.3 mm edge clearance. On Last Hit v0.6 FreeRouting ran a 3.3 V track 0.25 mm from the USB-C's plastic peg hole and the DRC flagged it. M26 had fixed the same rule for the generator's own vias only.
+Cost: one red DRC after an otherwise complete route, and a fix in the DSN writer.
+Root cause: P17 listed the copper the generator places, not the obstacles it hands the router, whose copper the DRC judges by the same rules.
+Process: P17
+
+## M34 — 2026-10-24 — Pushed with lint findings on the screen
+What happened: the push of Last Hit's mutation script was chained behind the firmware tests only; `ruff check` ran in the same command, printed two line-length findings, and the push went ahead.
+Cost: a follow-up formatting change; the board repository's CI has no lint step, so nothing turned red.
+Root cause: a check that only printed its result, outside the push chain.
+Process: P14

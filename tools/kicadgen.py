@@ -876,11 +876,8 @@ class Design:
         """
         if not self.inside_outline(vx, vy, self.edge_clearance + r):
             return False
-        for k in self.keepouts:  # a via spans every layer, so any keepout refuses it
-            poly = k["polygon"]
-            edges = zip(poly, poly[1:] + poly[:1], strict=True)
-            if _inside_polygon(vx, vy, poly) or min(_seg_dist((vx, vy), a, b) for a, b in edges) < r:
-                return False
+        if self.in_keepout(vx, vy, r):
+            return False
         c = self.clearance
         for pad in boxes:
             if pad.kind == "np_thru_hole":
@@ -929,6 +926,16 @@ class Design:
                 "name": name or f"keepout{len(self.keepouts) + 1}",
             }
         )
+
+    def in_keepout(self, x: float, y: float, r: float) -> bool:
+        """True when a via of radius `r` at (x, y) would touch any keepout. A via spans every layer,
+        so a keepout on either face refuses it. Every path that places a via asks this (P17)."""
+        for k in self.keepouts:
+            poly = k["polygon"]
+            edges = zip(poly, poly[1:] + poly[:1], strict=True)
+            if _inside_polygon(x, y, poly) or min(_seg_dist((x, y), a, b) for a, b in edges) < r:
+                return True
+        return False
 
     @staticmethod
     def circle(cx: float, cy: float, r: float, n: int = 24) -> list[tuple[float, float]]:
@@ -1722,10 +1729,11 @@ class Design:
                 pins = []
                 for i, pad in enumerate(fp.pads):
                     if pad.kind == "np_thru_hole":
-                        # A hole with no copper: an unconnected pin the router must avoid. KiCad's hole
-                        # clearance (0.25 mm) exceeds the track clearance (0.2 mm); the obstacle is grown
-                        # by the difference so the router keeps the larger distance.
-                        margin = 2 * max(0.0, 0.25 - self.clearance)
+                        # A hole with no copper: an unconnected pin the router must avoid. The DRC treats
+                        # a non-plated hole as board edge (copper keeps `edge_clearance` from it) and
+                        # wants at least the 0.25 mm hole clearance; the obstacle is grown by the
+                        # difference to the track clearance so the router keeps the larger one (M33).
+                        margin = 2 * max(0.0, max(0.25, self.edge_clearance) - self.clearance)
                         hole = Pad(
                             f"NPTH{i}",
                             "thru_hole",
@@ -2103,7 +2111,16 @@ def stitch_zones(design: Design, pcb: Path, rounds: int = 6) -> int:
                         layer, polys, i, names = pieces[k]
                         other = "B.Cu" if layer == "F.Cu" else "F.Cu"
                         targets = [pieces[m] for m in m_comp if pieces[m][0] == other]
-                        spot = _via_spot(pcbnew, polys, i, targets, size / 2, drill / 2, holes)
+                        spot = _via_spot(
+                            pcbnew,
+                            polys,
+                            i,
+                            targets,
+                            size / 2,
+                            drill / 2,
+                            holes,
+                            blocked=lambda x, y, r=size / 2: design.in_keepout(x, y, r),
+                        )
                         if spot:
                             break
                     if spot:
@@ -2136,9 +2153,12 @@ def _holes(pcbnew, pcb: Path) -> list:
     return holes
 
 
-def _via_spot(pcbnew, polys, index: int, targets: list, radius: float, hole: float, holes: list):
+def _via_spot(
+    pcbnew, polys, index: int, targets: list, radius: float, hole: float, holes: list, blocked=None
+):
     """A point where a via of `radius` sits inside filled polygon `index` of `polys` and inside one of
-    the target polygons on the other layer, clear of every other hole. Scans a 0.1 mm grid from the
+    the target polygons on the other layer, clear of every other hole and of every point `blocked`
+    refuses (a keepout: the pour may fill one, a via may not sit in it). Scans a 0.1 mm grid from the
     polygon's centre outwards; None when nothing fits."""
     if not targets:
         return None
@@ -2165,6 +2185,8 @@ def _via_spot(pcbnew, polys, index: int, targets: list, radius: float, hole: flo
         if not inside(polys, index, x, y):
             continue
         if not any(inside(tp, ti, x, y) for _, tp, ti, _ in targets):
+            continue
+        if blocked is not None and blocked(x, y):
             continue
         p = pcbnew.VECTOR2I_MM(x, y)
         if any(math.hypot((p.x - hp.x) / 1e6, (p.y - hp.y) / 1e6) < hole + hr + 0.25 for hp, hr in holes):
