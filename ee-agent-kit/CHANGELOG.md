@@ -25,6 +25,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `kicadgen`: `Design.corner_radius` rounds the board corners (Edge.Cuts arcs, polygon boundary in the DSN, rounded default pour, corner-aware via check); `Design.model()` attaches a 3D body to a part's footprint.
 - `tools/wrlgen.py`: parametric VRML bodies in KiCad's 0.1 inch units: `usb-c-vertical`, `threaded-stud`.
 - `workcenter render` adds `board-3d-bottom.png`.
+- `kicadgen`: `Design.check_vias()` lists every via that hits a pad or track of another net on any layer, another via, a keep-out (by name) or the board edge; `workcenter design` prints the list before routing and exits 1 when it is not empty (M40, M41).
+- `tools/hooks/no_script_test_edits.py`: a PreToolUse hook that refuses a Bash command writing under `tests/` by script (P9 step 6, M43).
 - `kicadgen`: four-layer (and any even count) boards: `Design.copper_layers` adds `In1.Cu`.. with a 1.6 mm stackup; `Design.plane_layers` gives an inner layer whole to a pour, which the router never sees; through pads and vias carry copper on every routing layer in the DSN; island stitching lands vias on any layer and keeps clear of other nets' copper on the layers a via passes.
 - `docs/CONFIGURATION.md` names the FreeRouting pin that `install.sh` has carried since the 1.9.0 pin (M21).
 - `ee-agent-kit/MISTAKES.md` (every mistake, its cost, its process) and `ee-agent-kit/PROCESSES.md` (binding checklists P1 to P20); `make verify` checks that each mistake names an existing process and each process has a "Done when" line.
@@ -44,4 +46,5 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - The router sees a non-plated hole grown to the board-edge clearance the DRC applies to it, not the hole clearance (M33).
 - Island stitching runs once per poured net, not once per zone: a net with two zones got two vias on one spot (M37).
 - A custom pad on the bottom face is mirrored with its shapes, not only its position; its size is read from its shapes, not its anchor (M38).
+- The generator's pad boxes leave out paste-only apertures, and measure a round pad as a circle, not as its box.
 ### Security

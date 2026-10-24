@@ -66,6 +66,11 @@ project and routes it with FreeRouting. No GUI at any step.
      tracks and vias out of an area (under grounded metal, a mounting
      screw, an antenna). KiCad gets a rule area, the router a keepout, and
      the generator's own vias stay out of it.
+     A keep-out's via ban holds on every layer, since a via passes them
+     all: a part placed inside one is wired out on its own face to a via
+     outside (the strips along the board edges, past the keep-out circle).
+     `workcenter design` lists every hand via that lands in a keep-out or
+     on any face's pad, and exits 1.
    - `d.model(ref, "${KIPRJMOD}/models/x.wrl")` gives a part a 3D body for the
      renders and the STEP export when the library has none (vertical
      receptacles, wire pads with a stud). `python3 tools/wrlgen.py` writes

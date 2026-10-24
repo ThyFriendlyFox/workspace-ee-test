@@ -33,8 +33,13 @@ must clear or land on a pad.
    drawn thinner with `width=`.
 5. End a track on the pad centre. Route one net, run `workcenter drc .`,
    read every clearance line it prints, fix, then the next net.
+6. A via is on every copper layer. Before writing `d.via`, look at what
+   sits on the other face and the inner layers at that spot; then
+   `workcenter design` lists every hand via that hits a pad, a track, a
+   via, a keep-out or the edge (and exits 1). Fix those before routing.
 
-Done when: the pre-routed board's DRC shows only unconnected items.
+Done when: the pre-routed board's DRC shows only unconnected items and
+`workcenter design` reports no via problem.
 
 ## P2 — CI and install steps
 
@@ -72,9 +77,14 @@ classes.
 3. Generate and run `workcenter erc .` and `workcenter drc .` on the
    unrouted board. Every error except unconnected items is a placement or
    rule mistake; fix it here, not after routing.
+4. List the area rules before placing: each keep-out, what it forbids
+   (tracks, vias, pours) and on which layers. A keep-out that forbids
+   vias forbids them on every layer, since a via passes them all. Mark the
+   via-free areas; a part placed in one is wired out on its own face to a
+   via outside, so give it a path there.
 
 Done when: ERC 0/0 and DRC shows only unconnected items before the first
-route.
+route, and the via-free areas are named in a comment in the design file.
 
 ## P4 — Before every route
 
@@ -136,6 +146,9 @@ file another program wrote.
 3. Keep a real sample of the output in `tests/` and parse it there, one
    for every shape the format allows (a courtyard can be a rectangle,
    lines, a polygon or a circle).
+4. A sign convention (which way a rotation turns, which axis is up) is
+   read from the tool, never assumed: render or export once with an
+   asymmetric body and look at the result before building on it.
 
 Done when: a test parses a real sample and the parser's assumptions are
 written next to it.
@@ -182,7 +195,8 @@ Edit tool.
    break, real line breaks inside a triple-quoted string.
 6. Tests are written with the Write or Edit tool, not appended by a
    script, and read back before they run: every assertion must be able
-   to fail.
+   to fail. The `no_script_test_edits.py` hook refuses a Bash command
+   that writes under `tests/` (M43).
 
 Done when: the script reported every anchor found, and the formatter and
 linter pass on the result.

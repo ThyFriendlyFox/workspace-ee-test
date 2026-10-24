@@ -20,6 +20,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/tools/hooks/no_cd.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/tools/hooks/no_script_test_edits.py",
+            "timeout": 10
           }
         ]
       }
