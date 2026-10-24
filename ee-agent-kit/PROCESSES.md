@@ -148,7 +148,8 @@ When: every shell command.
    `cd` in one command is undone by the next without an error: a
    `cd X && ...` chain stops or runs in the wrong repository. Use
    `make -C`, `git -C`, `python3 /abs/script.py`, and absolute paths in
-   every heredoc.
+   every heredoc. In this repository a PreToolUse hook
+   (`tools/hooks/no_cd.py`) refuses a Bash command that runs `cd`.
 2. `--help` before a flag you have not used in this session. Global
    flags such as `--json` go before the subcommand.
 3. `pkill -x name`, never `pkill -f` with a pattern that matches the
@@ -308,13 +309,17 @@ configures those pins compiles.
 When: changing code in the workcenter that places copper on its own
 (stitching vias, reserved vias, generated tracks or pours).
 
-1. List every DRC rule that applies to that copper: copper to copper by
-   net, hole to hole, copper to board edge, and non-plated holes, which
-   the DRC treats as board edge.
-2. The placement check covers each rule with the same numbers the board's
-   design rules use, read from the `Design`, not typed again.
-3. One test per rule: place the copper just inside and just outside each
-   kind of obstacle and expect refused and accepted.
+1. List every code path that places that copper: grep the generator for
+   every place a via or track is appended (stitching and reserved vias
+   before routing, island stitching after it, generated tracks).
+2. List every DRC rule that applies to that copper: copper to copper by
+   net, hole to hole, copper to board edge, non-plated holes, which the
+   DRC treats as board edge, and keepouts.
+3. Each rule is one check, with the same numbers the board's design rules
+   use, read from the `Design`, not typed again; every path from step 1
+   calls it.
+4. One test per rule and per path: place the copper just inside and just
+   outside each kind of obstacle and expect refused and accepted.
 
 Done when: every rule on the list has a test, and a routed board with the
 change passes the DRC with no item placed by the tool.

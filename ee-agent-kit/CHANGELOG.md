@@ -18,6 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `install.sh` creates the venv with `--system-site-packages` so the workcenter's Python sees `pcbnew`.
 - `kicadgen`: project footprint libraries (`Design.footprint_dirs`, an `fp-lib-table` in the generated project, `footprint --lib NAME=DIR`); stadium outlines (corner radius up to half the short side); circle courtyards read as centre and radius (M24).
 - `tools/wrlgen.py`: `connector-510` (M7 x 0.5 internal thread), `cartridge-510`, `pouch-cell`, `display-module` presets; material transparency.
+- `.claude/settings.json`: a PreToolUse hook (`tools/hooks/no_cd.py`) refuses a Bash command that runs `cd` (P8, M31).
 - `kicadgen`: keep-out areas (`Design.keepout(polygon, layers, name)`, with `Design.circle(cx, cy, r)` for round ones): a KiCad rule area with no tracks or vias, a Specctra keepout for the router, and a refusal in the via check.
 - `kicadgen`: `Design.corner_radius` rounds the board corners (Edge.Cuts arcs, polygon boundary in the DSN, rounded default pour, corner-aware via check); `Design.model()` attaches a 3D body to a part's footprint.
 - `tools/wrlgen.py`: parametric VRML bodies in KiCad's 0.1 inch units: `usb-c-vertical`, `threaded-stud`.
@@ -36,4 +37,5 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - FreeRouting session coordinates are read at the scale the session's placement block implies, not the declared resolution.
 - FreeRouting pinned to 1.9.0: 2.1.0 hangs after routing in proxied environments because its GitHub version check fails.
 - `kicadgen`'s via check treats a non-plated hole as board edge, as the DRC does; island stitching had put a via 0.2 mm from a receptacle's peg hole (M26).
+- Island stitching after routing keeps its vias out of keepouts; one keepout check (`Design.in_keepout`) now serves both via placers (M30).
 ### Security

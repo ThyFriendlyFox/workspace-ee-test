@@ -187,3 +187,15 @@ What happened: on Last Hit v0.5 a 3.3 V lane drawn 8 mm across the top face abov
 Cost: three routing runs and a re-placement of the regulator, which is what fixed it.
 Root cause: a long hand route treated as a local fix; on two layers a track is a wall for every net on its layer that has to cross it.
 Process: P11
+
+## M30 — 2026-10-24 — Keepouts checked by one of the two via placers
+What happened: PR #12 taught `_via_fits` (stitching and reserved vias before routing) to refuse a via in a keepout, but the island stitcher that runs after routing (`stitch_zones`, `_via_spot`) has its own placement and was not touched. On Last Hit v0.6's first route it put two ground vias under cartridge A's collar, and the DRC flagged both.
+Cost: a red DRC on the first v0.6 route and a second workcenter PR.
+Root cause: P17's rules were checked in the function being edited, not in every code path that places the same copper.
+Process: P17
+
+## M31 — 2026-10-24 — A `cd` in a command, a fourth time
+What happened: a pytest command started with `cd /home/user/workspace-ee-test;`, against P8. Nothing ran in the wrong place this time, but the session's working directory moved.
+Cost: none this time; the same slip cost lost edits in M20 and M22.
+Root cause: P8 was a rule only the agent checked.
+Process: P8

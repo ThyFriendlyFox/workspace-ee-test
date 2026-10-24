@@ -342,6 +342,60 @@ def test_write_fills_the_pour_and_stitches_a_walled_off_pad(tmp_path):
     }
 
 
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("cd /home/user/repo && ls", True),
+        ("ls; cd build", True),
+        ("(cd tools && make)", True),
+        ("echo start\ncd /tmp", True),
+        ("make -C /home/user/repo verify", False),
+        ("git -C /home/user/repo status", False),
+        ("ls /tmp/abcd /tmp/cd-rom", False),
+    ],
+)
+def test_hook_refuses_a_bash_command_that_runs_cd(command, blocked):
+    """P8 as a machine check (M31): the PreToolUse hook exits 2, which blocks the call."""
+    hook = ROOT / "tools" / "hooks" / "no_cd.py"
+    call = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    proc = subprocess.run(
+        [sys.executable, str(hook)], input=call, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == (2 if blocked else 0), (command, proc.stderr)
+    other = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/x"}})
+    assert subprocess.run([sys.executable, str(hook)], input=other, text=True, check=False).returncode == 0
+
+
+@needs_libs
+@needs_kicad
+def test_island_stitching_keeps_its_vias_out_of_keepouts(tmp_path):
+    """The walled-off pad above with a keepout over its whole island: the only spots for a stitching
+    via are forbidden, so the island is left to the DRC instead of a via under a grounded shell (M30)."""
+    pytest.importorskip("pcbnew")
+    d = poured_divider()
+    d.track("VIN", [(103.0, 102.5), (107.675, 102.5)], "F.Cu")
+    d.track("OUT", [(103.0, 105.04), (106.5, 105.04), (107.675, 106.5)], "F.Cu")
+    d.track("OUT", [(109.325, 102.5), (109.325, 103.8), (110.3, 104.6), (110.3, 105.5)], "F.Cu")
+    d.track(
+        "OUT",
+        [
+            (107.675, 106.5),
+            (108.4, 106.5),
+            (108.4, 105.5),
+            (110.3, 105.5),
+            (110.3, 107.5),
+            (108.4, 107.5),
+            (108.4, 106.5),
+        ],
+        "F.Cu",
+    )
+    d.keepout(kicadgen.Design.circle(109.35, 106.5, 1.6), layers=("F.Cu",), name="shell")
+    d.write(tmp_path)
+    gnd_vias = [v for v in d.vias if v[0] == "GND"]
+    assert not any(d.in_keepout(x, y, size / 2) for _, (x, y), size, _ in gnd_vias), gnd_vias
+    assert d.islands, "the walled-off pad must be reported when no via may land in its island"
+
+
 @needs_libs
 @needs_kicad
 @needs_router
