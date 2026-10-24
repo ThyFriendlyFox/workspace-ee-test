@@ -301,3 +301,9 @@ What happened: after Last Hit v0.7 was pushed (`6b27d37`), the user asked for a 
 Cost: an interrupted round; the edits moved to `v0.8/` and `v0.7/` went back to its commit.
 Root cause: the project's rules said how to start a new version, not when; "the highest version is the one in work" was read as "change it in place".
 Process: P22
+
+## M49 — 2026-10-24 — A process whose steps contradict each other
+What happened: P22 (M48) said in step 2 that the previous version's README banner changes to "archived", and in step 4 that `git status` on the previous folder prints nothing. The case it was written for, v0.7 after v0.8 was made, fails step 4 by following step 2. Found while closing out v0.8, after PR #21 merged.
+Cost: a second PR for one line of a process.
+Root cause: the process was written from the rule, not walked through the case that caused it.
+Process: P13

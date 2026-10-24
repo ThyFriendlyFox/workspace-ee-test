@@ -13,7 +13,7 @@ behavior change. The weekly cycle (WEEKLY.md step 5) refreshes it.
 | Autoroute, hand-drawn boards | 🚧 | Produces a session from a KiCad-exported DSN; import is manual. ROADMAP item 1. |
 | `workcenter render` | ✅ | Schematic, board top and bottom, 3D top, bottom and isometric images with part bodies when `kicad-packages3d` is installed, plus the project's own `wrlgen` bodies; PNG through librsvg. |
 | Skills | ✅ | 6 skills with frontmatter, checked by `make verify`. |
-| Mistake log and processes | ✅ | `MISTAKES.md` M1 to M48, `PROCESSES.md` P1 to P22; `make verify` checks every entry names an existing process and every process has a "Done when" line. |
+| Mistake log and processes | ✅ | `MISTAKES.md` M1 to M49, `PROCESSES.md` P1 to P22; `make verify` checks every entry names an existing process and every process has a "Done when" line. |
 | Cloud environment | 🚧 | `environment/setup.sh` written; not yet set on an environment by a human. |
 | Docker image | 🚧 | `Dockerfile` written; `release.yml` builds it on the first tag. |
 | CI | ✅ | `ci.yml` green on PR #1; runs on every PR and push to `main`. |
