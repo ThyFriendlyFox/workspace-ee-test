@@ -229,3 +229,9 @@ What happened: an `import os` was inserted into `tests/test_kicadgen.py` with `s
 Cost: none; recorded because the rule says every slip is.
 Root cause: a one-line convenience taken past a rule that names test files.
 Process: P9
+
+## M37 — 2026-10-24 — Island stitching looped per zone, not per net
+What happened: the island stitcher ran once for each zone, and each run read the pours of the zone's whole net. A net with two zones (a ground plane on `In1.Cu` and a pour on `F.Cu`) found the same island twice in one round and got two vias on the same spot. Every board so far had one zone per net, so nothing showed it until the four-layer test did.
+Cost: one red test while adding four-layer boards; no board shipped with it.
+Root cause: a loop over the containers of a thing (zones) where the work is per thing (net), and tests that only ever had one of each.
+Process: P17
