@@ -438,3 +438,27 @@ its own folder, a script into a subfolder, a library to a new path.
 
 Done when: every command the READMEs name ran from the new location, and
 the diff against each source commit shows only the named edits.
+
+## P22 — Versions of a project
+
+When: changing a project kept as version folders (`v0.1/`, `v0.2/`, ...),
+before the first edit of a request.
+
+1. A new feature is a new version. A feature is anything the boards or the
+   firmware do or carry that the latest version does not: a part, a pad, a
+   net, a connection, a board, a dimension, a firmware behaviour. Copy the
+   latest folder to the next number first (`cp -a`, then remove its
+   `build/` folders) and make every edit in the copy. When unsure whether a
+   change is a feature, it is one.
+2. The latest version takes only what finishes the request it was made
+   for: gate fixes, renders, documents, what its own CI asks for. Once it is
+   pushed and a new feature is asked for, it is finished: its README banner
+   says archived, with its last commit.
+3. In the new folder, the README banner names the version it came from; the
+   series index gets a row; the project's CLAUDE.md names the new version
+   as the one in work.
+4. `git status --short <previous version>/` prints nothing.
+
+Done when: the request's edits sit only in the new folder, the previous
+folder matches its commit, and the index and CLAUDE.md name the new
+version.
