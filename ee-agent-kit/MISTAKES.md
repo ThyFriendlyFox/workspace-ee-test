@@ -271,3 +271,9 @@ What happened: a coordinate in `tests/test_kicadgen.py` was changed with a Pytho
 Cost: none in behaviour; the tests ran green. Recorded because the rule had been broken before.
 Root cause: a rule that only a reader enforces, broken under the habit of scripted edits for every other file.
 Process: P9
+
+## M44 — 2026-10-24 — A script's path to the workcenter broken by moving it one folder down
+What happened: the Last Hit board moved into `v0.6/` so that each prototype is a folder, and `assembly.py` still looked for a workcenter checkout at `HERE.parent / "workspace-ee-test"`, which now named the board repository's own root. The grep for self-relative paths before the move printed the lines that used the found path, not the line that built it, and CI never runs the script, so the replay of CI passed.
+Cost: one failed assembly run, caught before the push.
+Root cause: the moved files were checked through the commands CI runs, not through every path they compute from their own location and every command their READMEs name.
+Process: P21

@@ -27,9 +27,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `workcenter render` adds `board-3d-bottom.png`.
 - `kicadgen`: `Design.check_vias()` lists every via that hits a pad or track of another net on any layer, another via, a keep-out (by name) or the board edge; `workcenter design` prints the list before routing and exits 1 when it is not empty (M40, M41).
 - `tools/hooks/no_script_test_edits.py`: a PreToolUse hook that refuses a Bash command writing under `tests/` by script (P9 step 6, M43).
+- `PROCESSES.md` P21 (moving files in a project): self-relative paths listed before the move, every README command run after it, each folder diffed against its source commit (M44).
 - `kicadgen`: four-layer (and any even count) boards: `Design.copper_layers` adds `In1.Cu`.. with a 1.6 mm stackup; `Design.plane_layers` gives an inner layer whole to a pour, which the router never sees; through pads and vias carry copper on every routing layer in the DSN; island stitching lands vias on any layer and keeps clear of other nets' copper on the layers a via passes.
 - `docs/CONFIGURATION.md` names the FreeRouting pin that `install.sh` has carried since the 1.9.0 pin (M21).
-- `ee-agent-kit/MISTAKES.md` (every mistake, its cost, its process) and `ee-agent-kit/PROCESSES.md` (binding checklists P1 to P20); `make verify` checks that each mistake names an existing process and each process has a "Done when" line.
+- `ee-agent-kit/MISTAKES.md` (every mistake, its cost, its process) and `ee-agent-kit/PROCESSES.md` (binding checklists P1 to P21); `make verify` checks that each mistake names an existing process and each process has a "Done when" line.
 ### Changed
 - `install.sh` prints apt progress and runs it non-interactively; the KiCad download from the PPA is slow on GitHub runners and a silent step was cancelled as hung.
 - `workcenter render` leaves the fabrication layer out of the 2D top image.
