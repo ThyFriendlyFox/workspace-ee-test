@@ -56,7 +56,15 @@ project and routes it with FreeRouting. No GUI at any step.
      four lines and four arcs, the router's boundary and the default pour
      follow them, and the via check knows the corners. Pads near a corner
      need `edge_clearance` from the arc, not from the rectangle. Half the
-     short side makes a stadium (round ends, two arcs meeting).
+     short side makes a stadium (round ends, two arcs meeting). Four radii,
+     `(top-left, top-right, bottom-right, bottom-left)`, give each corner its
+     own: `(6.35, 1.0, 1.0, 6.35)` rounds the left end into a half circle and
+     leaves the right end flat for a board that stands on it; 0 is a square
+     corner.
+   - `thickness=` on `Design` sets the finished board (1.6 mm unless told
+     otherwise); any other value writes a stackup, on two layers too. A
+     daughter board soldered upright on another is often 0.8 mm. Say it in
+     the README's fab notes.
    - A part the library lacks gets a project footprint: a `.pretty` folder
      in the project, named in `d.footprint_dirs = {"Name": path}` and used
      as `"Name:Footprint"`. Read it with

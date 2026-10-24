@@ -551,7 +551,8 @@ def test_wrlgen_bodies_are_valid_vrml_in_kicad_units(tmp_path):
 
 @needs_libs
 @needs_kicad
-@pytest.mark.parametrize("radius", [2.0, 5.0])  # rounded corners, and a stadium (half the 10 mm side)
+# rounded corners, a stadium (half the 10 mm side), and a half circle at one end with one square corner
+@pytest.mark.parametrize("radius", [2.0, 5.0, (5.0, 1.0, 0.0, 5.0)])
 def test_rounded_board_passes_drc_except_for_routing(tmp_path, radius):
     d = divider()
     d.corner_radius = radius
@@ -604,6 +605,53 @@ def test_stadium_outline_drops_the_end_lines_and_shared_points():
     d.corner_radius = 5.1
     with pytest.raises(ValueError):
         d.outline_polygon()
+
+
+@needs_libs
+def test_corner_radii_round_one_end_and_square_the_other():
+    d = divider()  # 12 x 10 mm
+    d.corner_radius = (5.0, 1.0, 1.0, 5.0)  # top-left, top-right, bottom-right, bottom-left
+    board = d.board()
+    assert board.count("(gr_arc") == 4 and board.count("(gr_line") == 3  # the left end is all arc
+    poly = d.outline_polygon()
+    assert len(poly) == len(set(poly)) == 4 * 9 - 1  # the two left arcs share one point
+    assert d.inside_outline(111.4, 100.6, 0.3)  # inside the small top-right arc
+    assert not d.inside_outline(111.8, 100.2, 0.0)  # outside it, though inside the rectangle
+    assert not d.inside_outline(100.6, 100.6, 0.3)  # the left end's arc has cut this away
+    d.corner_radius = (5.0, 0.0, 0.0, 5.0)  # square on the right
+    board = d.board()
+    assert board.count("(gr_arc") == 2 and board.count("(gr_line") == 3
+    poly = d.outline_polygon()
+    assert (112.0, 100.0) in poly and (112.0, 110.0) in poly  # a square corner is one point
+    assert len(poly) == len(set(poly)) == 2 + 2 * 9 - 1
+    assert d.inside_outline(111.7, 109.7, 0.3) and not d.inside_outline(100.6, 109.4, 0.3)
+    for bad in ((6.0, 6.5, 0.0, 0.0), (-1.0, 0.0, 0.0, 0.0), (1.0, 1.0, 1.0)):
+        d.corner_radius = bad  # the top side too short for both; a negative radius; three radii
+        with pytest.raises(ValueError):
+            d.outline_polygon()
+
+
+@needs_libs
+def test_thickness_writes_a_two_layer_stackup_and_the_default_does_not():
+    d = divider()
+    tree = kicadgen.parse(d.board())
+    assert kicadgen.atoms(kicadgen.child(kicadgen.child(tree, "general"), "thickness")) == ["1.6"]
+    assert kicadgen.child(kicadgen.child(tree, "setup"), "stackup") is None  # as every board before
+    d.thickness = 0.8
+    tree = kicadgen.parse(d.board())
+    assert kicadgen.atoms(kicadgen.child(kicadgen.child(tree, "general"), "thickness")) == ["0.8"]
+    stack = kicadgen.child(kicadgen.child(tree, "setup"), "stackup")
+    kinds = [kicadgen.atoms(kicadgen.child(ly, "type"))[0] for ly in kicadgen.children(stack, "layer")]
+    assert kinds.count("copper") == 2 and kinds.count("core") == 1 and "prepreg" not in kinds
+    thick = [
+        float(kicadgen.atoms(kicadgen.child(ly, "thickness"))[0])
+        for ly in kicadgen.children(stack, "layer")
+        if kicadgen.child(ly, "thickness") is not None
+    ]
+    assert sum(thick) == pytest.approx(0.8 + 0.02, abs=0.005)  # 0.8 mm board plus both masks
+    d.thickness = 0.06
+    with pytest.raises(ValueError):
+        d.board()  # thinner than its own copper
 
 
 def test_wrlgen_510_presets_have_an_internal_thread_and_glass(tmp_path):

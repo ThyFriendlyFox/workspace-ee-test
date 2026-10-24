@@ -197,6 +197,9 @@ Edit tool.
    script, and read back before they run: every assertion must be able
    to fail. The `no_script_test_edits.py` hook refuses a Bash command
    that writes under `tests/` (M43).
+7. A test's geometric expectation (inside or outside, how far, which
+   side) is computed before it is written: one `python3 -c` with the
+   distance printed, not a judgement by eye (M45).
 
 Done when: the script reported every anchor found, and the formatter and
 linter pass on the result.
