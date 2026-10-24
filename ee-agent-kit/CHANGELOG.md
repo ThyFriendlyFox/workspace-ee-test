@@ -31,6 +31,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `PROCESSES.md` P21 (moving files in a project): self-relative paths listed before the move, every README command run after it, each folder diffed against its source commit (M44).
 - `kicadgen`: `Design.check_via_rules()` lists every via size (default, net class, hand via) below the board's minimum hole, via or annular ring; `workcenter design` runs it before routing and exits 1 (M46, `PROCESSES.md` P3 step 5). `Design.board_rules()` is the rule set the project file carries.
 - `PROCESSES.md` P7 also covers handing a tool a rotation or an axis; the `board-design` skill writes down KiCad 10's model rotation convention (M47).
+- `PROCESSES.md` P22 (versions of a project): every new feature is a new version folder, copied before the first edit (M48).
 - `kicadgen`: four-layer (and any even count) boards: `Design.copper_layers` adds `In1.Cu`.. with a 1.6 mm stackup; `Design.plane_layers` gives an inner layer whole to a pour, which the router never sees; through pads and vias carry copper on every routing layer in the DSN; island stitching lands vias on any layer and keeps clear of other nets' copper on the layers a via passes.
 - `docs/CONFIGURATION.md` names the FreeRouting pin that `install.sh` has carried since the 1.9.0 pin (M21).
 - `ee-agent-kit/MISTAKES.md` (every mistake, its cost, its process) and `ee-agent-kit/PROCESSES.md` (binding checklists P1 to P21); `make verify` checks that each mistake names an existing process and each process has a "Done when" line.

@@ -295,3 +295,9 @@ What happened: in the Last Hit v0.7 assembly the display board's body was attach
 Cost: one assembly render; (-90, 0, -90) stood the board up.
 Root cause: the convention learned in M42 was written down only as "read it from the tool", under a trigger that does not name the act that needs it, and the convention itself was written nowhere.
 Process: P7
+
+## M48 — 2026-10-24 — A new feature built inside a finished version
+What happened: after Last Hit v0.7 was pushed (`6b27d37`), the user asked for a seventh joint pad to feed the panel's VBAT from the cell. The new joint footprints and the panel's VBAT switch went into `v0.7/`, read as "the version in work". The user stopped it: every new feature is a new version.
+Cost: an interrupted round; the edits moved to `v0.8/` and `v0.7/` went back to its commit.
+Root cause: the project's rules said how to start a new version, not when; "the highest version is the one in work" was read as "change it in place".
+Process: P22
