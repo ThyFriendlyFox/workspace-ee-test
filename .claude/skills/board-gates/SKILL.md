@@ -49,7 +49,8 @@ never remove one.
    evidence in the message. Loop until GREEN.
 6. GREEN: fabrication outputs are in `build/fab/` (gerbers, drill, BOM,
    schematic PDF). Run `workcenter render <project>` for the schematic,
-   board, and 3D images in `build/render/`. Report the gates table, the
+   board, 3D and per-layer images in `build/render/` (`--views spin` for a
+   turning GIF). Report the gates table, the
    counts, and the artifact paths. `build/` stays out of the repository;
    images the README shows are copied into the project's `docs/`.
 7. A generated design (`design.py`, see `board-design`) is fixed in the

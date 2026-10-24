@@ -152,7 +152,9 @@ project and routes it with FreeRouting. No GUI at any step.
      then runs end to end on that face and every island on the other face
      can be stitched to it.
 6. **Gates.** `workcenter gates .` until GREEN. `workcenter render .` for
-   the images: schematic, both faces, 3D top, bottom and isometric. Commit
+   the images: schematic, both faces, 3D top, bottom and isometric, and every
+   layer on its own (`layers/`, `layers.png`); `--views spin` adds a GIF of
+   the 3D board turning round. Commit
    `design.py`, any `models/*.wrl`, and the generated `.kicad_*` files
    together; the generated files are what KiCad opens.
 
