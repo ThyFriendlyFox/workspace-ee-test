@@ -8,6 +8,7 @@ a 2-resistor board, routes it, merges the session, and expects DRC clean.
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import kicadgen  # noqa: E402
+import wrlgen  # noqa: E402
 
 CLI = ROOT / "tools" / "workcenter"
 LIBS = kicadgen.SYMBOL_DIR / "Device.kicad_sym"
@@ -372,3 +374,80 @@ def test_design_command_routes_a_poured_board_green(tmp_path):
     assert records["islands"] == []
     code, records = run_cli("gates", tmp_path, "--out", tmp_path / "build")
     assert code == 0, records
+
+
+# ------------------------------------------------ rounded corners and 3D bodies
+
+
+@needs_libs
+def test_rounded_corners_write_arcs_and_a_polygon_boundary():
+    d = divider()
+    d.corner_radius = 2.0
+    board = d.board()
+    assert board.count("(gr_arc") == 4 and board.count("(gr_line") == 4 and "(gr_rect" not in board
+    x1, y1, x2, y2 = d.outline
+    k = 2.0 - 2.0 / math.sqrt(2.0)
+    assert f"(mid {kicadgen.fmt(x2 - k)} {kicadgen.fmt(y1 + k)})" in board  # the top-right arc's midpoint
+    boundary = d.dsn().split("(boundary")[1].split(")")[0].split()[3:]
+    assert len(boundary) == 2 * (4 * 9 + 1)  # four corners of eight segments, closed, as x y pairs
+    assert len(d.outline_polygon(d.edge_clearance)) == 36
+    e = d.edge_clearance + 0.3
+    assert d.inside_outline(x1 + e, (y1 + y2) / 2, e)  # beside a straight edge
+    assert not d.inside_outline(x1 + e, y1 + e, e)  # in a corner the arc has cut away
+    d.zone("GND", layers=("B.Cu",))
+    assert len(d.zones[-1]["polygon"]) == 36  # the default pour follows the corners
+
+
+@needs_libs
+def test_model_is_written_into_the_footprint_instance():
+    d = divider()
+    d.model("R1", "${KIPRJMOD}/models/stud.wrl", offset=(0, 0, 1.5), rotate=(0, 0, 90))
+    d.model("R2", "${KIPRJMOD}/models/other.wrl", replace=True)
+    with pytest.raises(KeyError):
+        d.model("R9", "x.wrl")
+    ids = d.net_ids()
+    r1 = kicadgen.dumps(d._footprint_instance(next(p for p in d.parts if p.ref == "R1"), ids))
+    r2 = kicadgen.dumps(d._footprint_instance(next(p for p in d.parts if p.ref == "R2"), ids))
+    assert r1.count("(model ") == 2  # the library body stays, ours is added
+    assert '(model "${KIPRJMOD}/models/stud.wrl"' in r1
+    flat = " ".join(r1.split())
+    assert (
+        "(offset (xyz 0 0 1.5) )" in flat
+        and "(rotate (xyz 0 0 90) )" in flat
+        and "(scale (xyz 1 1 1) )" in flat
+    )
+    assert r2.count("(model ") == 1 and "other.wrl" in r2  # replace drops the library body
+
+
+def test_wrlgen_bodies_are_valid_vrml_in_kicad_units(tmp_path):
+    out = tmp_path / "usb.wrl"
+    nv, nf = wrlgen.write_wrl(out, wrlgen.usb_c_vertical(height=7.0), "test")
+    text = out.read_text()
+    assert text.startswith("#VRML V2.0 utf8") and text.count("IndexedFaceSet") == 3 and nv > 100 and nf > 100
+    tops = []
+    for shape in text.split("Shape {")[1:]:
+        pts = shape.split("point [")[1].split("]")[0].split(",")
+        idx = [
+            int(i)
+            for i in shape.split("coordIndex [")[1].split("]")[0].replace(",", " ").split()
+            if i != "-1"
+        ]
+        assert max(idx) < len(pts)  # every index names a vertex
+        tops.append(max(float(pt.split()[2]) for pt in pts))
+    assert abs(max(tops) - 7.0 / 2.54) < 1e-3  # millimetres went in, KiCad's 0.1 inch units came out
+    stud = wrlgen.threaded_stud(major=1.6, pitch=0.35, height=4.0)[0]
+    radii = [math.hypot(x, y) for x, y, z in stud.vertices if 0.5 < z < 3.5]
+    assert 0.60 < min(radii) < 0.62 and 0.79 < max(radii) < 0.801  # minor and major radius of M1.6 x 0.35
+    assert wrlgen.main(["threaded-stud", str(tmp_path / "s.wrl")]) == 0 and (tmp_path / "s.wrl").is_file()
+
+
+@needs_libs
+@needs_kicad
+def test_rounded_board_passes_drc_except_for_routing(tmp_path):
+    d = divider()
+    d.corner_radius = 2.0
+    d.write(tmp_path)
+    code, gates = run_cli("drc", tmp_path)
+    drc = next(g for g in gates if g["gate"] == "drc")
+    assert drc["details"]["counts"]["violations"]["error"] == 0, drc  # the arcs close the outline
+    assert "invalid_outline" not in json.dumps(drc)

@@ -396,6 +396,7 @@ class Part:
     zone_connect: int | None = (
         None  # how zones meet this part's pads: None inherit, 0 none, 1 thermal, 2 solid
     )
+    models: list[dict] = field(default_factory=list)  # extra 3D bodies, see Design.model()
 
     @property
     def on_board(self) -> bool:
@@ -443,6 +444,7 @@ class Design:
     track_width: float = 0.25
     clearance: float = 0.2
     edge_clearance: float = 0.3
+    corner_radius: float = 0.0  # rounded board corners; 0 is a plain rectangle
     via_size: float = 0.6
     via_drill: float = 0.3
     # name -> {"width", "clearance", "via", "via_drill", "nets": [...]} for nets that need more copper
@@ -513,6 +515,130 @@ class Design:
         part.zone_connect = zone_connect
         self.parts.append(part)
         return part
+
+    def model(
+        self,
+        ref: str,
+        path: str,
+        offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        scale: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        rotate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        replace: bool = False,
+    ) -> None:
+        """Attach a 3D body to a part's footprint, for the renders and the STEP export.
+
+        `path` is what KiCad resolves: `${KIPRJMOD}/models/x.wrl` for a file kept with the project,
+        `${KICAD10_3DMODEL_DIR}/...` for a library body. `replace` drops the library's own model.
+        A `.wrl` body is in 0.1 inch units (KiCad scales VRML by 2.54); `tools/wrlgen.py` writes them.
+        """
+        part = next((p for p in self.parts if p.ref == ref), None)
+        if part is None:
+            raise KeyError(f"{ref}: no such part")
+        part.models.append(
+            {
+                "path": path,
+                "offset": tuple(offset),
+                "scale": tuple(scale),
+                "rotate": tuple(rotate),
+                "replace": replace,
+            }
+        )
+
+    # ---- outline
+
+    def outline_polygon(self, inset: float = 0.0, n: int = 8) -> list[tuple[float, float]]:
+        """The board outline shrunk by `inset`, clockwise; a rounded corner becomes `n` segments."""
+        x1, y1, x2, y2 = self.outline
+        x1, y1, x2, y2 = x1 + inset, y1 + inset, x2 - inset, y2 - inset
+        r = max(0.0, self.corner_radius - inset)
+        if r <= 0:
+            return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+        corners = [
+            ((x2 - r, y1 + r), -90.0),
+            ((x2 - r, y2 - r), 0.0),
+            ((x1 + r, y2 - r), 90.0),
+            ((x1 + r, y1 + r), 180.0),
+        ]
+        pts: list[tuple[float, float]] = []
+        for (cx, cy), a0 in corners:
+            for i in range(n + 1):
+                a = math.radians(a0 + 90.0 * i / n)
+                pts.append((round(cx + r * math.cos(a), 4), round(cy + r * math.sin(a), 4)))
+        return pts
+
+    def inside_outline(self, x: float, y: float, margin: float = 0.0) -> bool:
+        """Is (x, y) at least `margin` inside the board edge, rounded corners included?"""
+        x1, y1, x2, y2 = self.outline
+        if not (x1 + margin <= x <= x2 - margin and y1 + margin <= y <= y2 - margin):
+            return False
+        r = self.corner_radius
+        rr = r - margin
+        if rr <= 0:
+            return True
+        cx = x1 + r if x < x1 + r else (x2 - r if x > x2 - r else None)
+        cy = y1 + r if y < y1 + r else (y2 - r if y > y2 - r else None)
+        if cx is None or cy is None:
+            return True
+        return math.hypot(x - cx, y - cy) <= rr
+
+    def _edge_cuts(self, ns: uuid.UUID) -> list[Node]:
+        """The Edge.Cuts graphics: one rectangle, or four lines and four arcs when the corners are round."""
+        x1, y1, x2, y2 = self.outline
+        r = self.corner_radius
+
+        def stroke() -> Node:
+            return ["stroke", ["width", "0.1"], ["type", "default"]]
+
+        if r <= 0:
+            return [
+                [
+                    "gr_rect",
+                    ["start", fmt(x1), fmt(y1)],
+                    ["end", fmt(x2), fmt(y2)],
+                    stroke(),
+                    ["fill", "no"],
+                    ["layer", Q("Edge.Cuts")],
+                    ["uuid", uid(ns, "edge")],
+                ]
+            ]
+        k = r - r / math.sqrt(2.0)  # the arc's midpoint sits this far in from both edges
+        lines = [
+            ((x1 + r, y1), (x2 - r, y1)),
+            ((x2, y1 + r), (x2, y2 - r)),
+            ((x2 - r, y2), (x1 + r, y2)),
+            ((x1, y2 - r), (x1, y1 + r)),
+        ]
+        arcs = [
+            ((x2 - r, y1), (x2 - k, y1 + k), (x2, y1 + r)),
+            ((x2, y2 - r), (x2 - k, y2 - k), (x2 - r, y2)),
+            ((x1 + r, y2), (x1 + k, y2 - k), (x1, y2 - r)),
+            ((x1, y1 + r), (x1 + k, y1 + k), (x1 + r, y1)),
+        ]
+        out: list[Node] = []
+        for i, ((sx, sy), (ex, ey)) in enumerate(lines):
+            out.append(
+                [
+                    "gr_line",
+                    ["start", fmt(sx), fmt(sy)],
+                    ["end", fmt(ex), fmt(ey)],
+                    stroke(),
+                    ["layer", Q("Edge.Cuts")],
+                    ["uuid", uid(ns, f"edge/line/{i}")],
+                ]
+            )
+        for i, ((sx, sy), (mx, my), (ex, ey)) in enumerate(arcs):
+            out.append(
+                [
+                    "gr_arc",
+                    ["start", fmt(sx), fmt(sy)],
+                    ["mid", fmt(mx), fmt(my)],
+                    ["end", fmt(ex), fmt(ey)],
+                    stroke(),
+                    ["layer", Q("Edge.Cuts")],
+                    ["uuid", uid(ns, f"edge/arc/{i}")],
+                ]
+            )
+        return out
 
     # ---- nets
 
@@ -696,9 +822,7 @@ class Design:
         tracks: bool = True,
     ) -> bool:
         """Clearance check for a via at (vx, vy): board edge, other nets' pads, holes, vias and tracks."""
-        x1, y1, x2, y2 = self.outline
-        e = self.edge_clearance
-        if not (x1 + e + r <= vx <= x2 - e - r and y1 + e + r <= vy <= y2 - e - r):
+        if not self.inside_outline(vx, vy, self.edge_clearance + r):
             return False
         c = self.clearance
         for pad in boxes:
@@ -744,9 +868,7 @@ class Design:
         if connect not in ("thermal", "solid"):
             raise ValueError(f"zone connect must be thermal or solid, not {connect!r}")
         if polygon is None:
-            x1, y1, x2, y2 = self.outline
-            e = self.edge_clearance
-            polygon = [(x1 + e, y1 + e), (x2 - e, y1 + e), (x2 - e, y2 - e), (x1 + e, y2 - e)]
+            polygon = self.outline_polygon(self.edge_clearance)
         self.zones.append(
             {
                 "net": net,
@@ -1127,8 +1249,18 @@ class Design:
             out.append(p)
         out.append(["embedded_fonts", "no"])
         model = child(fpn, "model")
-        if model:
+        if model and not any(m["replace"] for m in part.models):
             out.append(model)
+        for m in part.models:
+            out.append(
+                [
+                    "model",
+                    Q(m["path"]),
+                    ["offset", ["xyz", *(fmt(v) for v in m["offset"])]],
+                    ["scale", ["xyz", *(fmt(v) for v in m["scale"])]],
+                    ["rotate", ["xyz", *(fmt(v) for v in m["rotate"])]],
+                ]
+            )
         return out
 
     @staticmethod
@@ -1231,17 +1363,7 @@ class Design:
         for part in self.parts:
             if part.on_board and part.pcb_at:
                 pcb.append(self._footprint_instance(part, net_ids))
-        pcb.append(
-            [
-                "gr_rect",
-                ["start", fmt(x1), fmt(y1)],
-                ["end", fmt(x2), fmt(y2)],
-                ["stroke", ["width", "0.1"], ["type", "default"]],
-                ["fill", "no"],
-                ["layer", Q("Edge.Cuts")],
-                ["uuid", uid(ns, "edge")],
-            ]
-        )
+        pcb.extend(self._edge_cuts(ns))
         if self.title:
             pcb.append(
                 [
@@ -1558,8 +1680,8 @@ class Design:
             f'    (padstack "{n}"\n      (shape (circle F.Cu {c(d)}))\n      (shape (circle B.Cu {c(d)}))\n      (attach off)\n    )'
             for n, (d, _) in vias.items()
         ]
-        bx1, by1, bx2, by2 = x1 + e, y1 + e, x2 - e, y2 - e
-        boundary = f"      (path pcb 0 {c(bx1)} {c(-by1)} {c(bx2)} {c(-by1)} {c(bx2)} {c(-by2)} {c(bx1)} {c(-by2)} {c(bx1)} {c(-by1)})"
+        ring = self.outline_polygon(e)
+        boundary = "      (path pcb 0 " + " ".join(f"{c(px)} {c(-py)}" for px, py in [*ring, ring[0]]) + ")"
         # A zone is a plane to the router: pads of its net on that layer count as connected, other
         # nets route across it, and KiCad fills around their tracks.
         planes = [

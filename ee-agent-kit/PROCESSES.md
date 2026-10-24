@@ -112,7 +112,9 @@ Python package in `requirements.txt`.
 1. Reproduce the fault or the gain with the exact version, in the
    environment that showed it (proxied cloud session, GitHub runner).
 2. Pin with the reason in `install.sh` (a comment with the symptom), a
-   row in the landmine map, a CHANGELOG line, and `docs/ENGINES.md`.
+   row in the landmine map, a CHANGELOG line, `docs/ENGINES.md`, and
+   every table that repeats the default (`docs/CONFIGURATION.md`):
+   `grep -rn` the old version string across the kit before the commit.
 3. Keep a check that fails when the pin is lost: a doctor line, a test,
    or a checksum.
 
@@ -138,10 +140,11 @@ written next to it.
 
 When: every shell command.
 
-1. Absolute paths. The working directory drifts between commands in this
-   environment; a relative path lands files in the wrong repository, and a
-   `cd` inside a backgrounded command may not take at all (`make -C`,
-   `git -C`, `python3 /abs/path`).
+1. Absolute paths, and no `cd`. Parallel tool calls share one shell, so a
+   `cd` in one command is undone by the next without an error: a
+   `cd X && ...` chain stops or runs in the wrong repository. Use
+   `make -C`, `git -C`, `python3 /abs/script.py`, and absolute paths in
+   every heredoc.
 2. `--help` before a flag you have not used in this session. Global
    flags such as `--json` go before the subcommand.
 3. `pkill -x name`, never `pkill -f` with a pattern that matches the

@@ -422,7 +422,7 @@ def gate_autoroute(
 
 @timed
 def gate_render(project: Project, out: Path, width: int = 1600) -> Result:
-    """Images of the design: schematic, board top and bottom (2D), board 3D top and isometric."""
+    """Images of the design: schematic, board top and bottom (2D), board 3D top, bottom and isometric."""
     rdir = out / "render"
     rdir.mkdir(parents=True, exist_ok=True)
     artifacts: list[str] = []
@@ -496,6 +496,7 @@ def gate_render(project: Project, out: Path, width: int = 1600) -> Result:
                 failures.append(svg.name)
         renders = (
             ("board-3d-top", []),
+            ("board-3d-bottom", ["--side", "bottom"]),
             ("board-3d-iso", ["--rotate", "-35,0,25", "--perspective"]),
         )
         for name, extra in renders:
@@ -726,7 +727,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--passes", type=int, default=20)
     p.add_argument("--threads", type=int, default=0)
     p.add_argument("--timeout", type=int, default=600)
-    p = add_project_cmd("render", "images: schematic, board top/bottom, 3D top and isometric")
+    p = add_project_cmd("render", "images: schematic, board top/bottom, 3D top, bottom and isometric")
     p.add_argument("--width", type=int, default=1600, help="image width in pixels")
     p = sub.add_parser(
         "design", help="build a kicadgen design.py into a KiCad project; --route runs FreeRouting"

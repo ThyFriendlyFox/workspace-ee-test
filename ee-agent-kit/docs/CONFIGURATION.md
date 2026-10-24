@@ -13,7 +13,7 @@ unset variable never causes a failure.
 | Field | Type | Default | Use |
 |---|---|---|---|
 | `WORKCENTER_ROOT` | path | `/opt/workcenters/ee` | Where the venv, the JAR, the manifest copy, and `env.sh` live. |
-| `FREEROUTING_VERSION` | string | `2.1.0` | Release to download. |
+| `FREEROUTING_VERSION` | string | `1.9.0` | Release to download. 2.1.0 hangs after routing in a proxied session (landmine map). |
 | `FREEROUTING_SHA256` | hex | pinned in the script | Expected JAR checksum. Empty skips the check with a warning. |
 | `FREEROUTING_URL` | URL | GitHub release asset for the version | Alternate download location. |
 | `REQUIRE_FREEROUTING` | `0`/`1` | `0` | `1` makes a failed JAR download fatal. CI sets `1`. |
@@ -37,6 +37,15 @@ unset variable never causes a failure.
 | `--step` | gates, export | off | Also export a STEP model. |
 | `--dsn FILE` | autoroute | `<project>/<name>.dsn`, then `build/route/<name>.dsn` | Specctra DSN exported from KiCad. Absent means the command skips. |
 | `--passes N` | autoroute, design | `20` autoroute, `60` design | FreeRouting optimisation passes. |
+
+## `tools/wrlgen.py`
+
+| Preset | Flags | Default | Use |
+|---|---|---|---|
+| `usb-c-vertical OUT` | `--height H`, `--base W D H`, `--shell W D WALL` | 7.0; 9.9 6.2 1.6; 9.0 3.6 0.25 | Vertical USB-C receptacle body: plastic base, metal shell, tongue. |
+| `threaded-stud OUT` | `--major D`, `--pitch P`, `--height H`, `--tail D LEN`, `--shoulder D H` | 1.6; 0.35; 4.0; 0.7 1.6; 1.5 0.4 | Threaded contact stud in a through-hole pad; `--tail 0 0 --shoulder 0 0` for a bare threaded barrel. |
+
+Every number is millimetres; the file is written in KiCad's VRML unit (0.1 inch).
 | `--threads N` | autoroute | engine default | FreeRouting thread count. |
 | `--timeout S` | autoroute, design | `600` autoroute, `900` design | Kill the router after S seconds. |
 | `--route` | design | off | Export the DSN, run FreeRouting, merge the session before writing. |
