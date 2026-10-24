@@ -1775,6 +1775,57 @@ class Design:
 
     # ---- project
 
+    def board_rules(self) -> dict:
+        """The board's design rules as the project file carries them: the workcenter's defaults with
+        `rules` laid over them. The key order is the file's; changing it changes every project."""
+        return {
+            "min_clearance": 0.0,
+            "min_connection": 0.0,
+            "min_copper_edge_clearance": self.edge_clearance,
+            "min_hole_clearance": 0.25,
+            "min_hole_to_hole": 0.25,
+            "min_microvia_diameter": 0.2,
+            "min_microvia_drill": 0.1,
+            "min_resolved_spokes": 2,
+            "min_silk_clearance": 0.0,
+            "min_text_height": 0.8,
+            "min_text_thickness": 0.08,
+            "min_through_hole_diameter": 0.3,
+            "min_track_width": 0.0,
+            "min_via_annular_width": 0.1,
+            "min_via_diameter": 0.5,
+            "solder_mask_to_copper_clearance": 0.0,
+            "use_height_for_length_calcs": True,
+            **self.rules,
+        }
+
+    def check_via_rules(self) -> list[str]:
+        """Every via size the board's own rules refuse: the default via, each net class's and each
+        hand via's, against the minimum hole, via diameter and annular ring. The router places the
+        default and net class vias, so the DRC of an unrouted board never sees one (M46)."""
+        rules = self.board_rules()
+        hole, dia, ring = (
+            rules["min_through_hole_diameter"],
+            rules["min_via_diameter"],
+            rules["min_via_annular_width"],
+        )
+        sizes = [("default via", self.via_size, self.via_drill)]
+        sizes += [(f"net class {name} via", s["via"], s["via_drill"]) for name, s in self.net_classes.items()]
+        sizes += [
+            (f"{net} via at ({fmt(x)}, {fmt(y)})", size, drill) for net, (x, y), size, drill in self.vias
+        ]
+        out = []
+        for what, size, drill in sizes:
+            if drill < hole - 1e-9:
+                out.append(f"{what}: drill {fmt(drill)} is below the board's minimum hole {fmt(hole)}")
+            if size < dia - 1e-9:
+                out.append(f"{what}: diameter {fmt(size)} is below the board's minimum via {fmt(dia)}")
+            if (size - drill) / 2 < ring - 1e-9:
+                out.append(
+                    f"{what}: annular ring {fmt((size - drill) / 2)} is below the board's minimum {fmt(ring)}"
+                )
+        return out
+
     def project(self) -> str:
         import json
 
@@ -1806,26 +1857,7 @@ class Design:
                 "design_settings": {
                     "defaults": {},
                     "rule_severities": {"lib_footprint_issues": "ignore", "lib_footprint_mismatch": "ignore"},
-                    "rules": {
-                        "min_clearance": 0.0,
-                        "min_connection": 0.0,
-                        "min_copper_edge_clearance": self.edge_clearance,
-                        "min_hole_clearance": 0.25,
-                        "min_hole_to_hole": 0.25,
-                        "min_microvia_diameter": 0.2,
-                        "min_microvia_drill": 0.1,
-                        "min_resolved_spokes": 2,
-                        "min_silk_clearance": 0.0,
-                        "min_text_height": 0.8,
-                        "min_text_thickness": 0.08,
-                        "min_through_hole_diameter": 0.3,
-                        "min_track_width": 0.0,
-                        "min_via_annular_width": 0.1,
-                        "min_via_diameter": 0.5,
-                        "solder_mask_to_copper_clearance": 0.0,
-                        "use_height_for_length_calcs": True,
-                        **self.rules,
-                    },
+                    "rules": self.board_rules(),
                 },
                 "ipc2581": {"dist": "", "distpn": "", "internal_id": "", "mfg": "", "mpn": ""},
                 "layer_presets": [],

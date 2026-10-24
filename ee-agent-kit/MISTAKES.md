@@ -283,3 +283,15 @@ What happened: the per-corner radius test asserted that (111.6, 100.4) lies outs
 Cost: none; the test never ran with the wrong point.
 Root cause: a distance estimated from the numbers' look instead of computed.
 Process: P9
+
+## M46 — 2026-10-24 — Router vias below the board's minimum hole
+What happened: the Last Hit v0.7 display board set its vias to 0.5 / 0.25 mm, small for a small board; the generator writes a 0.3 mm minimum hole into every board's rules. The DRC of the unrouted board (P3 step 3) had no via to check, the router placed nine 0.25 mm vias, and the DRC refused all nine (drill out of range) after the route.
+Cost: one route and one gates run; the vias went to 0.6 / 0.3 and the board routed again.
+Root cause: a via size set without reading the rules the generator writes, and the one check that compared them, the DRC, runs after the router has placed the vias.
+Process: P3
+
+## M47 — 2026-10-24 — A 3D model turned the wrong way again
+What happened: in the Last Hit v0.7 assembly the display board's body was attached with a rotation worked out by the right-hand rule, (90, 0, 90); KiCad turns models the other way, and the board hung below the base instead of standing on it. M42 was the same mistake. P7 step 4 says to read a sign convention from the tool, but P7 is for parsing another tool's output, and attaching a model is not parsing, so the step was never read.
+Cost: one assembly render; (-90, 0, -90) stood the board up.
+Root cause: the convention learned in M42 was written down only as "read it from the tool", under a trigger that does not name the act that needs it, and the convention itself was written nowhere.
+Process: P7

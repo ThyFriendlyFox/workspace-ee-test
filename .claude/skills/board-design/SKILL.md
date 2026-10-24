@@ -79,12 +79,23 @@ project and routes it with FreeRouting. No GUI at any step.
      outside (the strips along the board edges, past the keep-out circle).
      `workcenter design` lists every hand via that lands in a keep-out or
      on any face's pad, and exits 1.
+   - Via sizes (`via_size`, `via_drill`, each net class's `via` and
+     `via_drill`, any hand via) must meet the board's rules: a 0.3 mm hole,
+     a 0.5 mm via, a 0.1 mm ring unless `d.rules` lowers them.
+     `workcenter design` lists every size the rules refuse and exits 1,
+     before routing (P3 step 5, M46).
    - `d.model(ref, "${KIPRJMOD}/models/x.wrl")` gives a part a 3D body for the
      renders and the STEP export when the library has none (vertical
      receptacles, wire pads with a stud). `python3 tools/wrlgen.py` writes
      parametric bodies (`usb-c-vertical`, `threaded-stud`) in KiCad's VRML
      units; keep them in the project under `models/` with the command that
      made them.
+   - A model's rotation in KiCad 10 turns each axis the opposite way from
+     the right-hand rule, about the footprint's fixed axes, x before z; its
+     offset has y up. A board exported with `kicad-cli pcb export vrml`
+     lies with y up its face and z out of it: (-90, 0, -90) stands it on
+     edge with its face along +x, (90, 0, 90) hangs it below the board
+     (M42, M47). Render once before composing views (P7 step 4).
    - `d.text(label, x, y, "F.SilkS", size, thickness)` for contact labels.
      Below 0.8 mm text, set `d.rules = {"min_text_height": ..,
      "min_text_thickness": ..}` or the DRC flags every label.
