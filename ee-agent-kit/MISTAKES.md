@@ -277,3 +277,9 @@ What happened: the Last Hit board moved into `v0.6/` so that each prototype is a
 Cost: one failed assembly run, caught before the push.
 Root cause: the moved files were checked through the commands CI runs, not through every path they compute from their own location and every command their READMEs name.
 Process: P21
+
+## M45 — 2026-10-24 — A test point judged outside an arc by eye
+What happened: the per-corner radius test asserted that (111.6, 100.4) lies outside a 1 mm corner arc centred at (111, 101); it is 0.85 mm from the centre, inside. The read-back before the run caught it.
+Cost: none; the test never ran with the wrong point.
+Root cause: a distance estimated from the numbers' look instead of computed.
+Process: P9

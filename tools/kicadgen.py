@@ -492,7 +492,10 @@ class Design:
     track_width: float = 0.25
     clearance: float = 0.2
     edge_clearance: float = 0.3
-    corner_radius: float = 0.0  # rounded board corners; 0 a rectangle, half the short side a stadium
+    # Rounded board corners: one radius for all four (0 a rectangle, half the short side a stadium),
+    # or four, (top-left, top-right, bottom-right, bottom-left), to round one end and square the other.
+    corner_radius: float | tuple[float, float, float, float] = 0.0
+    thickness: float = 1.6  # the finished board, mm; any other value writes a stackup on two layers too
     footprint_dirs: dict[str, Path] = field(
         default_factory=dict
     )  # project footprint libraries: name -> .pretty
@@ -604,13 +607,33 @@ class Design:
 
     # ---- outline
 
-    def _corner_r(self) -> float:
-        """The corner radius, checked: at most half the short side (a stadium), never negative."""
+    def _corner_radii(self) -> tuple[float, float, float, float]:
+        """The four corner radii (top-left, top-right, bottom-right, bottom-left), checked.
+
+        One number rounds every corner alike: at most half the short side (a stadium). Four give
+        each corner its own: none negative, and the two on any side together no longer than it.
+        """
         x1, y1, x2, y2 = self.outline
+        w, h = x2 - x1, y2 - y1
         r = self.corner_radius
-        if r < 0 or r > min(x2 - x1, y2 - y1) / 2 + 1e-9:
-            raise ValueError(f"corner_radius {r} must be between 0 and half the board's short side")
-        return r
+        if isinstance(r, (int, float)):
+            if r < 0 or r > min(w, h) / 2 + 1e-9:
+                raise ValueError(f"corner_radius {r} must be between 0 and half the board's short side")
+            return (float(r),) * 4
+        radii = tuple(float(v) for v in r)
+        if len(radii) != 4:
+            raise ValueError(
+                f"corner_radius takes one radius or four (top-left, top-right, bottom-right, bottom-left), not {r!r}"
+            )
+        tl, tr, br, bl = radii
+        sides = (("top", tl + tr, w), ("right", tr + br, h), ("bottom", br + bl, w), ("left", bl + tl, h))
+        if min(radii) < 0 or any(both > side + 1e-9 for _, both, side in sides):
+            long = [name for name, both, side in sides if both > side + 1e-9]
+            raise ValueError(
+                f"corner_radius {r!r}: radii must not be negative, and the two on a side must fit along it"
+                + (f" (too long: {', '.join(long)})" if long else "")
+            )
+        return radii  # type: ignore[return-value]
 
     def copper_names(self) -> list[str]:
         """The copper layers, top to bottom."""
@@ -636,24 +659,22 @@ class Design:
         """The board outline shrunk by `inset`, clockwise; a rounded corner becomes `n` segments.
 
         A stadium (radius half the short side) has no straight ends: the arcs meet, and the point
-        they share is listed once.
+        they share is listed once. A square corner is one point.
         """
         x1, y1, x2, y2 = self.outline
         x1, y1, x2, y2 = x1 + inset, y1 + inset, x2 - inset, y2 - inset
-        r = max(0.0, self._corner_r() - inset)
-        if r <= 0:
-            return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
-        corners = [
-            ((x2 - r, y1 + r), -90.0),
-            ((x2 - r, y2 - r), 0.0),
-            ((x1 + r, y2 - r), 90.0),
-            ((x1 + r, y1 + r), 180.0),
+        tl, tr, br, bl = (max(0.0, r - inset) for r in self._corner_radii())
+        corners = [  # clockwise from the top right, as (centre, start angle, radius)
+            ((x2 - tr, y1 + tr), -90.0, tr),
+            ((x2 - br, y2 - br), 0.0, br),
+            ((x1 + bl, y2 - bl), 90.0, bl),
+            ((x1 + tl, y1 + tl), 180.0, tl),
         ]
         pts: list[tuple[float, float]] = []
-        for (cx, cy), a0 in corners:
-            for i in range(n + 1):
+        for (cx, cy), a0, r in corners:
+            for i in range(n + 1 if r > 0 else 1):
                 a = math.radians(a0 + 90.0 * i / n)
-                pt = (round(cx + r * math.cos(a), 4), round(cy + r * math.sin(a), 4))
+                pt = (round(cx + r * math.cos(a), 4), round(cy + r * math.sin(a), 4)) if r > 0 else (cx, cy)
                 if not pts or math.hypot(pt[0] - pts[-1][0], pt[1] - pts[-1][1]) > 1e-6:
                     pts.append(pt)
         if len(pts) > 1 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) <= 1e-6:
@@ -665,28 +686,29 @@ class Design:
         x1, y1, x2, y2 = self.outline
         if not (x1 + margin <= x <= x2 - margin and y1 + margin <= y <= y2 - margin):
             return False
-        r = self._corner_r()
-        rr = r - margin
-        if rr <= 0:
-            return True
-        cx = x1 + r if x < x1 + r else (x2 - r if x > x2 - r else None)
-        cy = y1 + r if y < y1 + r else (y2 - r if y > y2 - r else None)
-        if cx is None or cy is None:
-            return True
-        return math.hypot(x - cx, y - cy) <= rr
+        tl, tr, br, bl = self._corner_radii()
+        for r, left, top in ((tl, True, True), (tr, False, True), (br, False, False), (bl, True, False)):
+            if r - margin <= 0:
+                continue  # a square corner: the inset rectangle above already decided
+            cx = x1 + r if left else x2 - r
+            cy = y1 + r if top else y2 - r
+            in_corner = (x < cx if left else x > cx) and (y < cy if top else y > cy)
+            if in_corner and math.hypot(x - cx, y - cy) > r - margin:
+                return False
+        return True
 
     def _edge_cuts(self, ns: uuid.UUID) -> list[Node]:
-        """The Edge.Cuts graphics: one rectangle, or four lines and four arcs when the corners are round.
+        """The Edge.Cuts graphics: one rectangle, or lines and an arc per round corner.
 
-        A stadium drops the two lines that would have no length.
+        A stadium drops the two lines that would have no length; a square corner has no arc.
         """
         x1, y1, x2, y2 = self.outline
-        r = self._corner_r()
+        tl, tr, br, bl = self._corner_radii()
 
         def stroke() -> Node:
             return ["stroke", ["width", "0.1"], ["type", "default"]]
 
-        if r <= 0:
+        if max(tl, tr, br, bl) <= 0:
             return [
                 [
                     "gr_rect",
@@ -698,18 +720,21 @@ class Design:
                     ["uuid", uid(ns, "edge")],
                 ]
             ]
-        k = r - r / math.sqrt(2.0)  # the arc's midpoint sits this far in from both edges
+
+        def k(r: float) -> float:  # an arc's midpoint sits this far in from both edges
+            return r - r / math.sqrt(2.0)
+
         lines = [
-            ((x1 + r, y1), (x2 - r, y1)),
-            ((x2, y1 + r), (x2, y2 - r)),
-            ((x2 - r, y2), (x1 + r, y2)),
-            ((x1, y2 - r), (x1, y1 + r)),
+            ((x1 + tl, y1), (x2 - tr, y1)),
+            ((x2, y1 + tr), (x2, y2 - br)),
+            ((x2 - br, y2), (x1 + bl, y2)),
+            ((x1, y2 - bl), (x1, y1 + tl)),
         ]
-        arcs = [
-            ((x2 - r, y1), (x2 - k, y1 + k), (x2, y1 + r)),
-            ((x2, y2 - r), (x2 - k, y2 - k), (x2 - r, y2)),
-            ((x1 + r, y2), (x1 + k, y2 - k), (x1, y2 - r)),
-            ((x1, y1 + r), (x1 + k, y1 + k), (x1 + r, y1)),
+        arcs = [  # numbered as before per-corner radii, so a uniform radius keeps its uuids
+            (tr, (x2 - tr, y1), (x2 - k(tr), y1 + k(tr)), (x2, y1 + tr)),
+            (br, (x2, y2 - br), (x2 - k(br), y2 - k(br)), (x2 - br, y2)),
+            (bl, (x1 + bl, y2), (x1 + k(bl), y2 - k(bl)), (x1, y2 - bl)),
+            (tl, (x1, y1 + tl), (x1 + k(tl), y1 + k(tl)), (x1 + tl, y1)),
         ]
         out: list[Node] = []
         for i, ((sx, sy), (ex, ey)) in enumerate(lines):
@@ -725,7 +750,9 @@ class Design:
                     ["uuid", uid(ns, f"edge/line/{i}")],
                 ]
             )
-        for i, ((sx, sy), (mx, my), (ex, ey)) in enumerate(arcs):
+        for i, (r, (sx, sy), (mx, my), (ex, ey)) in enumerate(arcs):
+            if r <= 0:
+                continue  # a square corner: the two lines meet here
             out.append(
                 [
                     "gr_arc",
@@ -1495,13 +1522,18 @@ class Design:
 
     @staticmethod
     def _stackup(copper: list[str], thickness: float = 1.6) -> Node:
-        """A 1.6 mm FR4 stackup for a multilayer board: 35 um outer and 15 um inner copper, 7628
-        prepreg (0.21 mm) under each outer layer and between core pairs, the cores sharing the rest."""
+        """An FR4 stackup, 1.6 mm unless told otherwise: 35 um outer and 15 um inner copper; on a
+        multilayer board 7628 prepreg (0.21 mm) under each outer layer and between core pairs, the
+        cores sharing the rest; on two layers one core between the faces."""
         outer, inner_cu, prepreg = 0.035, 0.0152, 0.2104
         n = len(copper)
-        cores = n // 2 - 1
+        if n == 2:
+            prepreg = 0.0  # no prepreg: the one core is the board
+        cores = max(n // 2 - 1, 1)
         rest = thickness - 2 * outer - (n - 2) * inner_cu - (n // 2) * prepreg
         core = round(rest / cores, 4)
+        if core <= 0:
+            raise ValueError(f"a {thickness} mm board is too thin for {n} copper layers")
         out: Node = [
             "stackup",
             ["layer", Q("F.SilkS"), ["type", Q("Top Silk Screen")]],
@@ -1512,7 +1544,7 @@ class Design:
             cu = outer if i in (0, n - 1) else inner_cu
             out.append(["layer", Q(name), ["type", Q("copper")], ["thickness", fmt(cu)]])
             if i < n - 1:
-                kind, t = ("prepreg", prepreg) if i % 2 == 0 else ("core", core)
+                kind, t = ("prepreg", prepreg) if i % 2 == 0 and n > 2 else ("core", core)
                 out.append(
                     [
                         "layer",
@@ -1609,12 +1641,17 @@ class Design:
             ["version", str(PCB_VERSION)],
             ["generator", Q("pcbnew")],
             ["generator_version", Q("9.0")],
-            ["general", ["thickness", "1.6"], ["legacy_teardrops", "no"]],
+            ["general", ["thickness", fmt(self.thickness)], ["legacy_teardrops", "no"]],
             ["paper", Q("A4")],
             ["layers", *layers],
             [
                 "setup",
-                *([self._stackup(copper)] if len(copper) > 2 else []),
+                # A two-layer board at the default thickness keeps KiCad's own stackup, as it always has.
+                *(
+                    [self._stackup(copper, self.thickness)]
+                    if len(copper) > 2 or abs(self.thickness - 1.6) > 1e-9
+                    else []
+                ),
                 ["pad_to_mask_clearance", "0"],
                 ["allow_soldermask_bridges_in_footprints", "no"],
                 ["tenting", "front", "back"],
