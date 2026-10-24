@@ -257,7 +257,9 @@ When: a change is about to be called done.
    `cd`, and in the background with a log.
 2. Chain the commit and the push behind the verdict itself, never behind
    a look at the log: `grep -q 'VERIFY GREEN' log && git push ...`. A
-   `tail` succeeds whatever the log says.
+   `tail` succeeds whatever the log says. Every check you run before a
+   push is in the chain (`ruff check ... && make test && git push`); a
+   check whose result only prints is not a gate.
 3. Push, then confirm the remote holds it: `git ls-remote`.
 4. Watch CI to the end; red CI is work now, not later.
 5. The report names the commit, the run link, and the numbers from the
@@ -311,7 +313,9 @@ When: changing code in the workcenter that places copper on its own
 
 1. List every code path that places that copper: grep the generator for
    every place a via or track is appended (stitching and reserved vias
-   before routing, island stitching after it, generated tracks).
+   before routing, island stitching after it, generated tracks), and the
+   obstacles the DSN gives the router, whose tracks are copper the tool
+   chain adds too.
 2. List every DRC rule that applies to that copper: copper to copper by
    net, hole to hole, copper to board edge, non-plated holes, which the
    DRC treats as board edge, and keepouts.

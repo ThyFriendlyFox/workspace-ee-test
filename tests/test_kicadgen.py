@@ -589,6 +589,28 @@ def test_via_check_treats_a_non_plated_hole_as_board_edge():
 
 
 @needs_libs
+def test_router_keeps_edge_clearance_from_a_non_plated_hole():
+    """The router sees a non-plated hole grown to the board-edge clearance the DRC applies to it (M33):
+    the receptacle's 0.66 mm peg hole becomes a 0.66 + 2 x (0.3 - 0.2) mm obstacle, not 0.76."""
+    d = divider()
+    d.add(
+        "J5",
+        "Connector:USB_C_Receptacle_USB2.0_16P",
+        "USB-C",
+        "Connector_USB:USB_C_Receptacle_G-Switch_GT-USB-7051x",
+        sch_at=(50.8, 76.2),
+        pcb_at=(105.0, 105.0),
+        pcb_rot=90,
+        pcb_layer="B.Cu",
+        nets={"A1": "GND", "B1": "GND", "A12": "GND", "B12": "GND", "SH": "GND"},
+    )
+    assert d.edge_clearance == 0.3 and d.clearance == 0.2
+    dsn = d.dsn()
+    assert 'Pad_circle_0.86x0.86_TH "NPTH0"' in dsn, [ln for ln in dsn.splitlines() if "NPTH" in ln]
+    assert "Pad_circle_0.76x0.76_TH" not in dsn
+
+
+@needs_libs
 @needs_kicad
 def test_keepout_reaches_kicad_the_router_and_the_via_check(tmp_path):
     d = divider()

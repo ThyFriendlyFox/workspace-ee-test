@@ -39,4 +39,5 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - FreeRouting pinned to 1.9.0: 2.1.0 hangs after routing in proxied environments because its GitHub version check fails.
 - `kicadgen`'s via check treats a non-plated hole as board edge, as the DRC does; island stitching had put a via 0.2 mm from a receptacle's peg hole (M26).
 - Island stitching after routing keeps its vias out of keepouts; one keepout check (`Design.in_keepout`) now serves both via placers (M30).
+- The router sees a non-plated hole grown to the board-edge clearance the DRC applies to it, not the hole clearance (M33).
 ### Security

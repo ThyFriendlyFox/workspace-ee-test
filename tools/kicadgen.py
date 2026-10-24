@@ -1729,10 +1729,11 @@ class Design:
                 pins = []
                 for i, pad in enumerate(fp.pads):
                     if pad.kind == "np_thru_hole":
-                        # A hole with no copper: an unconnected pin the router must avoid. KiCad's hole
-                        # clearance (0.25 mm) exceeds the track clearance (0.2 mm); the obstacle is grown
-                        # by the difference so the router keeps the larger distance.
-                        margin = 2 * max(0.0, 0.25 - self.clearance)
+                        # A hole with no copper: an unconnected pin the router must avoid. The DRC treats
+                        # a non-plated hole as board edge (copper keeps `edge_clearance` from it) and
+                        # wants at least the 0.25 mm hole clearance; the obstacle is grown by the
+                        # difference to the track clearance so the router keeps the larger one (M33).
+                        margin = 2 * max(0.0, max(0.25, self.edge_clearance) - self.clearance)
                         hole = Pad(
                             f"NPTH{i}",
                             "thru_hole",

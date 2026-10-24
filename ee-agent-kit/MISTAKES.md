@@ -205,3 +205,15 @@ What happened: the first draft of Last Hit's firmware let a shorted coil run for
 Cost: rework inside the firmware task; none of it shipped.
 Root cause: no checklist for the failures embedded code repeats (the exposure window of a safety cut, unbounded retries, counter wrap), and tests not proven able to fail.
 Process: P18
+
+## M33 — 2026-10-24 — The router's model of a non-plated hole used the wrong clearance
+What happened: the DSN writer grew each non-plated hole by the 0.25 mm hole clearance, but the DRC treats such a hole as board edge and wants the 0.3 mm edge clearance. On Last Hit v0.6 FreeRouting ran a 3.3 V track 0.25 mm from the USB-C's plastic peg hole and the DRC flagged it. M26 had fixed the same rule for the generator's own vias only.
+Cost: one red DRC after an otherwise complete route, and a fix in the DSN writer.
+Root cause: P17 listed the copper the generator places, not the obstacles it hands the router, whose copper the DRC judges by the same rules.
+Process: P17
+
+## M34 — 2026-10-24 — Pushed with lint findings on the screen
+What happened: the push of Last Hit's mutation script was chained behind the firmware tests only; `ruff check` ran in the same command, printed two line-length findings, and the push went ahead.
+Cost: a follow-up formatting change; the board repository's CI has no lint step, so nothing turned red.
+Root cause: a check that only printed its result, outside the push chain.
+Process: P14
