@@ -307,3 +307,9 @@ What happened: P22 (M48) said in step 2 that the previous version's README banne
 Cost: a second PR for one line of a process.
 Root cause: the process was written from the rule, not walked through the case that caused it.
 Process: P13
+
+## M50 — 2026-10-24 — CLI flags without the configuration table, and the table split in two
+What happened: PR #23 gave `workcenter render` `--views`, `--spin-frames`, `--spin-tilt`, `--spin-zoom` and `--spin-pivot` without the rows P10 step 4 asks for in `docs/CONFIGURATION.md`. Checking it found `--rounds`, from an earlier PR, missing too, and the `tools/workcenter` flag table cut in two by the `wrlgen` and `kicadgen` sections, four of its rows standing under `kicadgen`.
+Cost: a configuration doc wrong for every flag added since the split; found while writing P23, after #23 merged.
+Root cause: P10 was not read before the command line changed, and nothing compared the table with the code.
+Process: P10
