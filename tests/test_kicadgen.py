@@ -663,3 +663,113 @@ def test_keepout_reaches_kicad_the_router_and_the_via_check(tmp_path):
     report = json.loads((tmp_path / "build" / "drc.json").read_text())
     kinds = {v["type"] for v in report["violations"]}
     assert "items_not_allowed" in kinds, (drc, kinds)  # KiCad read the zone as a keepout
+
+
+# ------------------------------------------------------------- four layers
+
+
+def four_layer_divider() -> kicadgen.Design:
+    """The divider on four layers: a ground plane on In1.Cu, In2.Cu free for routing."""
+    d = divider()
+    d.copper_layers = 4
+    d.plane_layers = ("In1.Cu",)
+    d.zone("GND", layers=("In1.Cu",), connect="solid")
+    return d
+
+
+def walled_off_ground_pad(d: kicadgen.Design) -> None:
+    """Hand routes for every net; OUT rings R2's ground pad on the top face, an island there."""
+    d.track("VIN", [(103.0, 102.5), (107.675, 102.5)], "F.Cu")
+    d.track("OUT", [(103.0, 105.04), (106.5, 105.04), (107.675, 106.5)], "F.Cu")
+    d.track("OUT", [(109.325, 102.5), (109.325, 103.8), (110.3, 104.6), (110.3, 105.5)], "F.Cu")
+    ring = [(107.675, 106.5), (108.4, 106.5), (108.4, 105.5), (110.3, 105.5), (110.3, 107.5)]
+    d.track("OUT", [*ring, (108.4, 107.5), (108.4, 106.5)], "F.Cu")
+
+
+@needs_libs
+def test_four_layer_board_writes_inner_layers_and_hides_the_plane_from_the_router():
+    d = four_layer_divider()
+    board = d.board()
+    assert '(4 "In1.Cu" signal)' in board and '(6 "In2.Cu" signal)' in board
+    assert '(layers "In1.Cu")' in board  # the plane's zone
+    stack = kicadgen.child(kicadgen.child(kicadgen.parse(board), "setup"), "stackup")
+    thick = [
+        float(kicadgen.atoms(kicadgen.child(ly, "thickness"))[0])
+        for ly in kicadgen.children(stack, "layer")
+        if kicadgen.child(ly, "thickness") is not None
+    ]
+    assert sum(thick) == pytest.approx(1.6 + 0.02, abs=0.005)  # 1.6 mm board plus both masks
+    dsn = d.dsn()
+    assert "In1.Cu" not in dsn  # the router never sees the plane
+    assert "(layer In2.Cu (type signal) (property (index 1)))" in dsn
+    assert "(layer B.Cu (type signal) (property (index 2)))" in dsn
+    assert '(padstack "Via[0-2]_600:300_um"' in dsn
+    via = dsn.split('(padstack "Via[0-2]_600:300_um"')[1].split("(attach")[0]
+    assert via.count("(shape (circle") == 3  # copper on every layer the router routes
+    through = [ps for ps in dsn.split("(padstack ")[1:] if ps.split()[0].endswith('_TH"')]
+    assert through and all(" In2.Cu " in ps.split("(attach")[0] for ps in through)  # pads too
+    d.track("OUT", [(104.0, 108.5), (108.0, 108.5)], "In2.Cu")
+    assert any(s[4] == "In2.Cu" for s in d.segments)
+    with pytest.raises(ValueError, match="In1.Cu"):
+        d.track("OUT", [(104.0, 108.5), (108.0, 108.5)], "In1.Cu")  # a plane takes no track
+    d.plane_layers = ("F.Cu",)
+    with pytest.raises(ValueError, match="inner layer"):
+        d.board()
+    d.plane_layers = ()
+    d.copper_layers = 3
+    with pytest.raises(ValueError, match="even"):
+        d.board()
+
+
+@needs_libs
+@needs_kicad
+@needs_router
+def test_four_layer_board_routes_green_around_its_plane(tmp_path):
+    """FreeRouting on the three routing layers; KiCad fills the plane round the router's vias."""
+    pytest.importorskip("pcbnew")
+    d = four_layer_divider()
+    summary = kicadgen.route(d, tmp_path / "build" / "route", passes=10, timeout=600)
+    assert summary["segments"] > 0, summary
+    assert all(s[4] != "In1.Cu" for s in d.segments)
+    d.write(tmp_path)
+    code, records = run_cli("gates", tmp_path, "--out", tmp_path / "build")
+    assert code == 0, records
+
+
+@needs_libs
+@needs_kicad
+def test_island_stitching_drops_a_via_to_an_inner_plane_and_passes_the_gates(tmp_path):
+    """The walled-off top pad with only the inner plane under it: the via lands on In1.Cu, and the
+    four-layer board passes every gate with gerbers for both inner layers."""
+    pytest.importorskip("pcbnew")
+    d = four_layer_divider()
+    d.zone("GND", layers=("F.Cu",), connect="solid")
+    walled_off_ground_pad(d)
+    d.write(tmp_path)
+    assert d.islands == []
+    assert len([v for v in d.vias if v[0] == "GND"]) == 1
+    code, records = run_cli("gates", tmp_path, "--out", tmp_path / "build")
+    assert code == 0, records
+    assert {r["gate"]: r["status"] for r in records}["drc"] == "pass"
+    gerbers = " ".join(next(r for r in records if r["gate"] == "export")["details"]["gerber_files"])
+    assert "In1_Cu" in gerbers and "In2_Cu" in gerbers, gerbers
+
+
+@needs_libs
+@needs_kicad
+def test_island_stitching_keeps_clear_of_tracks_on_the_layers_a_via_passes(tmp_path):
+    """The same island with an In2.Cu track of another net under all of it: a via there would short
+    to the track, so none is placed and the island is reported (P17)."""
+    pytest.importorskip("pcbnew")
+    d = four_layer_divider()
+    d.zone("GND", layers=("F.Cu",), connect="solid")
+    walled_off_ground_pad(d)
+    d.track("OUT", [(108.6, 106.5), (110.1, 106.5)], "In2.Cu")
+    d.write(tmp_path)
+    near = [
+        (x, y)
+        for net, (x, y), size, _ in d.vias
+        if net == "GND"
+        and kicadgen._seg_dist((x, y), (108.6, 106.5), (110.1, 106.5)) < size / 2 + 0.125 + 0.2
+    ]
+    assert near == [] and d.islands, (near, d.islands)

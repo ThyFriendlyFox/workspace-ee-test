@@ -80,6 +80,16 @@ project and routes it with FreeRouting. No GUI at any step.
      no ground track; KiCad fills it when the design is written. Prefer
      solid connections on a dense board: thermal spokes get starved
      between 0402 pads and the DRC reports each one.
+   - Four layers, when two cannot route the board: `copper_layers=4` on
+     `Design` (set it first; tracks, zones and keepouts check their layer
+     against it) adds `In1.Cu` and `In2.Cu` and a 1.6 mm stackup. A ground
+     plane is `plane_layers=("In1.Cu",)` with `d.zone("GND",
+     layers=("In1.Cu",), connect="solid")`: no track goes there, the router
+     never sees it, and KiCad clears every other-net via when it fills it.
+     Every through pad and via of the net lands on the plane, so each top or
+     bottom island needs one via, and a face pour can be cut freely. The
+     other inner layer routes like a face. Say in the README that the fab
+     order is four layers; it costs more than two.
 3. **Place.** Keep courtyards apart; read them with the `footprint`
    command. Group by current: heater copper short, connectors at edges,
    decoupling beside the IC on the same face as its pins. Rotate with

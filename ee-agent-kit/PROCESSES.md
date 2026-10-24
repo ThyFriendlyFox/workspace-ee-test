@@ -329,6 +329,10 @@ When: changing code in the workcenter that places copper on its own
    calls it.
 4. One test per rule and per path: place the copper just inside and just
    outside each kind of obstacle and expect refused and accepted.
+5. Test with two of everything the code loops over: two zones of one net,
+   more than two copper layers, a via that passes layers it does not join.
+   A loop written against one of each double-counts or skips the second
+   (M37).
 
 Done when: every rule on the list has a test, and a routed board with the
 change passes the DRC with no item placed by the tool.
