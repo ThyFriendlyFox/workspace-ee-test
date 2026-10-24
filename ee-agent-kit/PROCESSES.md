@@ -82,9 +82,18 @@ classes.
    vias forbids them on every layer, since a via passes them all. Mark the
    via-free areas; a part placed in one is wired out on its own face to a
    via outside, so give it a path there.
+5. Via sizes are rules too. The default via, each net class's and each
+   hand via must meet the board's minimum hole (0.3 mm), minimum via
+   (0.5 mm) and annular ring (0.1 mm), as `Design.board_rules()` gives
+   them with `d.rules` laid over. The router places most vias, so the
+   unrouted DRC of step 3 cannot see them; `workcenter design` checks the
+   sizes (`Design.check_via_rules()`) and exits 1 before routing. A
+   smaller via needs the fab's limit in the README and `d.rules` set to it
+   (M46).
 
 Done when: ERC 0/0 and DRC shows only unconnected items before the first
-route, and the via-free areas are named in a comment in the design file.
+route, `workcenter design` reports no via problem, and the via-free areas
+are named in a comment in the design file.
 
 ## P4 — Before every route
 
@@ -136,7 +145,8 @@ map says why it is that version.
 ## P7 — Parsing another tool's output
 
 When: reading a version string, a report, a session file, a log, or any
-file another program wrote.
+file another program wrote; or handing another tool a value whose sign or
+axis it defines (a 3D model's rotation or offset, an export's origin).
 
 1. Anchor the pattern on a token the tool guarantees (`version "`, a
    section header), never on free text that a proxy or a locale can
@@ -148,7 +158,10 @@ file another program wrote.
    lines, a polygon or a circle).
 4. A sign convention (which way a rotation turns, which axis is up) is
    read from the tool, never assumed: render or export once with an
-   asymmetric body and look at the result before building on it.
+   asymmetric body and look at the result before building on it. Write
+   the convention down where its next use will read it (the skill for
+   that tool), and use the written one instead of working it out again.
+   KiCad 10's is in the `board-design` skill (M42, M47).
 
 Done when: a test parses a real sample and the parser's assumptions are
 written next to it.

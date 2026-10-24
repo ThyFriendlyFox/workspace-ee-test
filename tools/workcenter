@@ -555,9 +555,11 @@ def cmd_design(args) -> int:
         "nets": len(design.net_names()),
     }
     code = EXIT_PASS
-    # Hand-placed vias are checked before anything is written or routed: a via passes every layer,
-    # and one in a keepout or on another face's pad is a short the DRC would only find later (M40, M41).
-    summary["via_problems"] = design.check_vias()
+    # Vias are checked before anything is written or routed: every via size against the board's own
+    # rules, since the router places most vias and the DRC of an unrouted board sees none (M46); and
+    # each hand via's place, since a via passes every layer, and one in a keepout or on another face's
+    # pad is a short the DRC would only find later (M40, M41).
+    summary["via_problems"] = design.check_via_rules() + design.check_vias()
     if summary["via_problems"]:
         code = EXIT_FAIL
     if args.route:
