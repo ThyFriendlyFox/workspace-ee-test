@@ -367,6 +367,31 @@ def test_hook_refuses_a_bash_command_that_runs_cd(command, blocked):
     assert subprocess.run([sys.executable, str(hook)], input=other, text=True, check=False).returncode == 0
 
 
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("sed -i 's/a/b/' /home/user/repo/tests/test_x.py", True),
+        ("python3 - <<'EOF'\np = Path('/r/tests/test_x.py')\np.write_text(s)\nEOF", True),
+        ("cat >> /r/tests/test_x.py <<'EOF'\ndef test_y(): pass\nEOF", True),
+        ("echo x | tee /r/tests/conftest.py", True),
+        ("perl -pi -e 's/a/b/' tests/test_x.py", True),
+        ("python3 -m pytest -q /r/tests/test_x.py -k four", False),
+        ("grep -n def /r/tests/test_x.py", False),
+        ("sed -n 1,40p /r/tests/test_x.py", False),
+        ("python3 - <<'EOF'\nPath('/r/tools/x.py').write_text(s)\nEOF", False),
+    ],
+)
+def test_hook_refuses_a_scripted_edit_to_a_test_file(command, blocked):
+    """P9 step 6 as a machine check (M43): writing under tests/ by script is refused, reading and
+    running tests are not, and scripted edits elsewhere pass."""
+    hook = ROOT / "tools" / "hooks" / "no_script_test_edits.py"
+    call = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    proc = subprocess.run(
+        [sys.executable, str(hook)], input=call, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == (2 if blocked else 0), (command, proc.stderr)
+
+
 def test_hook_installer_merges_once_into_user_settings(tmp_path):
     """install.sh puts the no-cd hook in the user settings (M35): kept settings, added once, then a no-op."""
     settings = tmp_path / ".claude" / "settings.json"
@@ -821,3 +846,60 @@ def test_back_face_custom_pads_mirror_their_shapes_and_keep_clearance(tmp_path):
     report = json.loads((tmp_path / "build" / "drc.json").read_text())
     clearance = [v for v in report["violations"] if v["type"] == "clearance"]
     assert clearance == [], clearance
+
+
+# ------------------------------------------------------------- hand vias
+
+
+@needs_libs
+def test_check_vias_names_what_a_hand_via_hits():
+    """A via passes every layer: one in a keepout or on another net's pad on either face is
+    reported with what it hits, before any routing (M40, M41)."""
+    d = divider()
+    d.keepout(kicadgen.Design.circle(110.0, 108.5, 1.0), layers=("F.Cu",), name="shell")
+    d.via("OUT", 110.0, 108.5)  # in the keepout
+    d.via("VIN", 109.325, 106.5)  # on R2's ground pad, a top-face pad
+    d.via("VIN", 104.0, 108.58)  # diagonal to J1's round ground pad: clear as a circle, not as its box
+    d.via("GND", 101.2, 101.2)  # clear
+    problems = d.check_vias()
+    assert any("(110, 108.5): in keepout 'shell'" in p for p in problems), problems
+    assert any("(109.325, 106.5): on R2.2 (GND, F.Cu)" in p for p in problems), problems
+    assert not any("(104, 108.58)" in p for p in problems), problems
+    assert not any("(101.2, 101.2)" in p for p in problems), problems
+    # Two vias of one net may sit closer than two copper clearances; only their holes are held apart.
+    d2 = divider()
+    d2.via("GND", 106.0, 109.0, 0.8, 0.4)
+    d2.via("GND", 106.8, 109.0, 0.8, 0.4)
+    assert d2.check_vias() == []
+    d2.via("GND", 106.4, 109.0, 0.8, 0.4)  # holes 0.0 mm apart
+    assert any("on the GND via" in p for p in d2.check_vias())
+
+
+@needs_libs
+def test_design_command_reports_a_hand_via_problem_and_fails(tmp_path):
+    design = tmp_path / "design.py"
+    design.write_text(
+        "import sys, uuid\n"
+        f"sys.path.insert(0, {str(ROOT / 'tools')!r})\n"
+        "import kicadgen\n"
+        "def build():\n"
+        "    d = kicadgen.Design(name='gen_divider', namespace=uuid.UUID(int=9),\n"
+        "                        outline=(100.0, 100.0, 112.0, 110.0))\n"
+        "    d.power_nets = {'GND': 'GND', 'VIN': 'VBUS'}\n"
+        "    d.flagged_nets = ['GND', 'VIN']\n"
+        "    r = 'Resistor_SMD:R_0603_1608Metric'\n"
+        "    hdr = 'Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical'\n"
+        "    d.add('J1', 'Connector_Generic:Conn_01x03', 'IN', hdr, sch_at=(50.8, 50.8),\n"
+        "          pcb_at=(103.0, 102.5), nets={'1': 'VIN', '2': 'OUT', '3': 'GND'})\n"
+        "    d.add('R1', 'Device:R', '10k', r, sch_at=(71.12, 45.72), pcb_at=(108.5, 102.5),\n"
+        "          nets={'1': 'VIN', '2': 'OUT'})\n"
+        "    d.add('R2', 'Device:R', '10k', r, sch_at=(71.12, 58.42), pcb_at=(108.5, 106.5),\n"
+        "          nets={'1': 'OUT', '2': 'GND'})\n"
+        "    d.via('VIN', 109.325, 106.5)\n"
+        "    return d\n",
+        encoding="utf-8",
+    )
+    code, records = run_cli("design", design, "--out", tmp_path / "out")
+    assert code == 1, records
+    assert records["via_problems"] == ["VIN via at (109.325, 106.5): on R2.2 (GND, F.Cu)"], records
+    assert (tmp_path / "out" / "gen_divider.kicad_pcb").is_file()  # still written, for the DRC

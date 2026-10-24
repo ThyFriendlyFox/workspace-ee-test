@@ -476,6 +476,7 @@ class PadBox:
     kind: str  # smd | thru_hole | np_thru_hole
     drill: float
     number: str = ""
+    shape: str = ""  # the footprint's pad shape; a circle is measured as one, not as its box
 
 
 @dataclass
@@ -818,6 +819,8 @@ class Design:
             back = part.pcb_layer == "B.Cu"
             th = math.radians(part.pcb_rot)
             for pad in part.footprint.pads:
+                if not any(layer.endswith(".Cu") for layer in pad.layers):
+                    continue  # a paste-only aperture (an exposed pad's paste windows): no copper
                 fx, fy = pad.x, -pad.y if back else pad.y
                 x = px + fx * math.cos(th) + fy * math.sin(th)
                 y = py - fx * math.sin(th) + fy * math.cos(th)
@@ -840,6 +843,9 @@ class Design:
                             pad.kind,
                             pad.drill,
                             pad.number,
+                            "circle"
+                            if pad.shape == "circle" or (pad.shape == "oval" and abs(pad.w - pad.h) < 1e-6)
+                            else pad.shape,
                         )
                     )
         return boxes
@@ -925,37 +931,87 @@ class Design:
         A non-plated hole is board edge to the DRC: the via's copper keeps `edge_clearance` from the
         hole's outline (its box, which covers an oval peg), whatever the net.
         """
+        return not self._via_problems(vx, vy, r, drill, pcb_net, boxes, tracks, first=True)
+
+    def _via_problems(
+        self,
+        vx: float,
+        vy: float,
+        r: float,
+        drill: float,
+        pcb_net: str,
+        boxes: list[PadBox],
+        tracks: bool = True,
+        first: bool = False,
+        skip_via: int | None = None,
+        same_net_vias: bool = True,
+    ) -> list[str]:
+        """What stops a via at (vx, vy), one line each; empty when it fits. A via passes every copper
+        layer, so a pad or track of another net on any layer blocks it (M41). `first` stops at the
+        first problem; `skip_via` leaves out the design's own via of that index; `same_net_vias=False`
+        holds a via of the same net only to the hole-to-hole rule, as the DRC does (the placers keep
+        their vias apart)."""
+        out: list[str] = []
         if not self.inside_outline(vx, vy, self.edge_clearance + r):
-            return False
-        if self.in_keepout(vx, vy, r):
-            return False
+            out.append(f"closer than {fmt(self.edge_clearance)} mm to the board edge")
+            if first:
+                return out
+        name = self.keepout_at(vx, vy, r)
+        if name:
+            out.append(f"in keepout {name!r}")
+            if first:
+                return out
         c = self.clearance
         for pad in boxes:
+            dx = max(pad.x1 - vx, 0.0, vx - pad.x2)
+            dy = max(pad.y1 - vy, 0.0, vy - pad.y2)
+            gap = math.hypot(dx, dy)
+            if pad.shape == "circle":
+                gap = max(
+                    0.0,
+                    math.hypot(vx - (pad.x1 + pad.x2) / 2, vy - (pad.y1 + pad.y2) / 2)
+                    - (pad.x2 - pad.x1) / 2,
+                )
             if pad.kind == "np_thru_hole":
-                dx = max(pad.x1 - vx, 0.0, vx - pad.x2)
-                dy = max(pad.y1 - vy, 0.0, vy - pad.y2)
-                if math.hypot(dx, dy) < max(r + self.edge_clearance, drill / 2 + 0.25):
-                    return False
-                continue
-            if (
+                if gap < max(r + self.edge_clearance, drill / 2 + 0.25):
+                    out.append(f"too near {pad.ref}'s non-plated hole")
+            elif (
                 pad.drill
                 and math.hypot(vx - (pad.x1 + pad.x2) / 2, vy - (pad.y1 + pad.y2) / 2)
                 < drill / 2 + pad.drill / 2 + 0.25
             ):
-                return False  # hole to hole
-            if pad.net == pcb_net:
+                out.append(f"hole to hole with {pad.ref}.{pad.number}")
+            elif pad.net != pcb_net and gap < r + c:
+                out.append(f"on {pad.ref}.{pad.number} ({pad.net or 'no net'}, {pad.layer})")
+            if first and out:
+                return out
+        for i, (net, (ox, oy), size, odrill) in enumerate(self.vias):
+            if i == skip_via:
                 continue
-            dx = max(pad.x1 - vx, 0.0, vx - pad.x2)
-            dy = max(pad.y1 - vy, 0.0, vy - pad.y2)
-            if math.hypot(dx, dy) < r + c:
-                return False
-        for _net, (ox, oy), size, odrill in self.vias:
-            if math.hypot(ox - vx, oy - vy) < max(r + size / 2 + c, drill / 2 + odrill / 2 + 0.25):
-                return False
-        for n, (sx, sy), (ex, ey), w, _ in self.segments:
+            copper = r + size / 2 + c if (net != pcb_net or same_net_vias) else 0.0
+            if math.hypot(ox - vx, oy - vy) < max(copper, drill / 2 + odrill / 2 + 0.25):
+                out.append(f"on the {net} via at ({fmt(ox)}, {fmt(oy)})")
+                if first:
+                    return out
+        for n, (sx, sy), (ex, ey), w, layer in self.segments:
             if tracks and n != pcb_net and _seg_dist((vx, vy), (sx, sy), (ex, ey)) < r + w / 2 + c:
-                return False
-        return True
+                out.append(f"on a {n} track ({layer})")
+                if first:
+                    return out
+        return list(dict.fromkeys(out))  # a through pad appears once per layer; say it once
+
+    def check_vias(self) -> list[str]:
+        """Every via on the design that breaks a clearance, a keepout or the board edge, with what it
+        hits: the hand-placed ones are checked before routing, where the DRC would find them only
+        after (M40, M41)."""
+        boxes = self.pad_boxes()
+        out = []
+        for i, (net, (x, y), size, drill) in enumerate(self.vias):
+            for problem in self._via_problems(
+                x, y, size / 2, drill, net, boxes, skip_via=i, same_net_vias=False
+            ):
+                out.append(f"{net} via at ({fmt(x)}, {fmt(y)}): {problem}")
+        return out
 
     def keepout(
         self, polygon: list[tuple[float, float]], layers: tuple[str, ...] = ("F.Cu",), name: str = ""
@@ -980,12 +1036,16 @@ class Design:
     def in_keepout(self, x: float, y: float, r: float) -> bool:
         """True when a via of radius `r` at (x, y) would touch any keepout. A via spans every layer,
         so a keepout on either face refuses it. Every path that places a via asks this (P17)."""
+        return self.keepout_at(x, y, r) is not None
+
+    def keepout_at(self, x: float, y: float, r: float) -> str | None:
+        """The name of the first keepout a via of radius `r` at (x, y) would touch, or None."""
         for k in self.keepouts:
             poly = k["polygon"]
             edges = zip(poly, poly[1:] + poly[:1], strict=True)
             if _inside_polygon(x, y, poly) or min(_seg_dist((x, y), a, b) for a, b in edges) < r:
-                return True
-        return False
+                return k["name"]
+        return None
 
     @staticmethod
     def circle(cx: float, cy: float, r: float, n: int = 24) -> list[tuple[float, float]]:

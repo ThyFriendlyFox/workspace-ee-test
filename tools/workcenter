@@ -555,6 +555,11 @@ def cmd_design(args) -> int:
         "nets": len(design.net_names()),
     }
     code = EXIT_PASS
+    # Hand-placed vias are checked before anything is written or routed: a via passes every layer,
+    # and one in a keepout or on another face's pad is a short the DRC would only find later (M40, M41).
+    summary["via_problems"] = design.check_vias()
+    if summary["via_problems"]:
+        code = EXIT_FAIL
     if args.route:
         fixed_segments, fixed_vias = list(design.segments), list(design.vias)  # hand-routed copper
         try:
@@ -594,6 +599,8 @@ def cmd_design(args) -> int:
             unrouted = "DRC decides" if r["unrouted"] is None else f"{r['unrouted']} unrouted"
             rounds = f"{summary.get('rounds', 1)} round(s)"
             print(f"  routed: {r['segments']} segments, {r['vias']} vias, {unrouted}, {rounds}  ({r['log']})")
+        for problem in summary["via_problems"]:
+            print(f"  via: {problem}")
         for island in summary["islands"]:
             print(f"  island: {', '.join(island)} cut off from their pour; the DRC will report it")
         for f in summary["files"]:
