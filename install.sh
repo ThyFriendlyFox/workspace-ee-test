@@ -32,7 +32,7 @@ KICAD_PPA_FPR="FDA854F61C4D0D9572BB95E5245D5502FAD7A805"   # "PPA for KiCad: 10.
 KICAD_KEYRING="/etc/apt/keyrings/kicad-10.0-releases.gpg"
 KICAD_SOURCES="/etc/apt/sources.list.d/kicad-10.0-releases.sources"
 KICAD_PACKAGES=(kicad kicad-symbols kicad-footprints kicad-templates)
-BASE_PACKAGES=(ngspice openjdk-21-jre-headless xvfb shellcheck librsvg2-bin
+BASE_PACKAGES=(ngspice openjdk-21-jre-headless xvfb shellcheck librsvg2-bin ffmpeg
                python3 python3-venv python3-pip curl ca-certificates)
 
 FREEROUTING_VERSION="${FREEROUTING_VERSION:-1.9.0}"

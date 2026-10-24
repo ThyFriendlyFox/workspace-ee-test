@@ -71,7 +71,15 @@ warnings). `workcenter design <design.py> [--route]` drives it.
 
 `rsvg-convert` turns the SVGs that `kicad-cli` exports into PNGs for
 `workcenter render`. Absent, the render command keeps the SVGs and says
-which PNGs it skipped.
+which PNGs it skipped. It also flattens the layer overview sheet, an SVG
+that places the per-layer PNGs in a grid.
+
+## FFmpeg
+
+`ffmpeg` joins the 3D frames that `kicad-cli pcb render` draws into the
+turning GIF of `workcenter render --views spin`, with a palette made from
+the frames themselves. Absent, the GIF is skipped with the reason; nothing
+else needs it, and the CLI stays standard-library Python.
 
 ## kipy (planned)
 

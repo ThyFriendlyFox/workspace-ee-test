@@ -17,6 +17,7 @@ passed every gate. "Done" means `workcenter gates <project>` prints GREEN.
 | FreeRouting | 1.9.0 | `workcenter design <design.py> --route` (generated boards, headless); `workcenter autoroute <project> [--dsn file]` (hand-drawn boards, DSN from KiCad) | `install.sh` (GitHub release, SHA-256 pinned; 2.1.0 hangs after routing when its GitHub version check cannot succeed) |
 | kicad-python (kipy) | 0.8 | `/opt/workcenters/ee/venv/bin/python` | `install.sh` (PyPI) |
 | librsvg | 2.58 | `rsvg-convert` (SVG to PNG for `workcenter render`) | `install.sh` (Ubuntu 24.04 archive) |
+| FFmpeg | 6.1 | `ffmpeg` (the turning GIF of `workcenter render --views spin`) | `install.sh` (Ubuntu 24.04 archive) |
 | kicadgen | this repo | `workcenter design <design.py> [--route]`; `python3 tools/kicadgen.py pins|footprint` | `install.sh` (part of the checkout) |
 | workcenter CLI | this repo | `workcenter` | `install.sh` (symlink to `tools/workcenter`) |
 
@@ -42,7 +43,14 @@ passed every gate. "Done" means `workcenter gates <project>` prints GREEN.
 | ALL | `workcenter gates <project>` | the 4 gates above in order, none red | a board is called done |
 
 Not a gate, but part of every hand-off: `workcenter render <project>` writes
-the schematic, board top and bottom, and 3D images into `build/render/`.
+the schematic, board top and bottom, and 3D images into `build/render/`, and
+every layer that has something on it into `build/render/layers/` (one PNG per
+layer with the outline, bottom layers seen from below) with an overview sheet,
+`build/render/layers.png`. `--views spin` adds `build/render/board-spin.gif`,
+the 3D board turning once round (`--spin-frames`, `--spin-tilt`, `--spin-zoom`,
+`--spin-pivot`;
+a minute or two of frames). `--views` takes any of schematic, 2d, 3d, layers,
+spin, or all.
 
 A project may add gates. It may not remove these.
 

@@ -171,6 +171,61 @@ def test_autoroute_without_dsn_skips_loudly(tmp_path):
     assert "DSN" in record["summary"] or "engine missing" in record["summary"]
 
 
+# ------------------------------------------------------------- render
+
+
+def test_copper_layers_and_render_views():
+    cli = load_cli_module()
+    assert cli.copper_layers(BOARDS / "pass-rc-divider" / "rc_divider.kicad_pcb") == ["F.Cu", "B.Cu"]
+    assert cli.render_views("layers,spin") == ("layers", "spin")
+    assert cli.render_views("all") == cli.RENDER_VIEWS
+    assert "spin" not in cli.DEFAULT_VIEWS  # a minute or two of frames: only on request
+    with pytest.raises(Exception, match="views are"):
+        cli.render_views("layers,photo")
+
+
+def test_render_refuses_an_unknown_view(tmp_path):
+    code, records = run("render", BOARDS / "pass-rc-divider", "--out", tmp_path, "--views", "photo")
+    assert code == 2 and records == []
+
+
+@needs_kicad
+def test_render_draws_each_layer_that_has_something_on_it(tmp_path):
+    code, records = run("render", BOARDS / "pass-rc-divider", "--out", tmp_path, "--views", "layers")
+    assert code == 0, records
+    layers = tmp_path / "render" / "layers"
+    names = sorted(p.name for p in layers.iterdir())
+    # Two copper layers; the fixture has nothing on its back silkscreen, paste, fab or courtyard.
+    drawn = ["F-Cu", "B-Cu", "F-Silkscreen", "F-Mask", "B-Mask", "F-Paste", "F-Fab", "F-Courtyard"]
+    assert names == sorted(f"{n}.png" for n in [*drawn, "Edge-Cuts"]), names
+    sheet = tmp_path / "render" / "layers.png"
+    assert sheet.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert not list((tmp_path / "render").glob("*.svg")), "the sheet's SVG is not left behind"
+
+
+@needs_kicad
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_render_spin_writes_a_looping_gif(tmp_path):
+    args = ("--views", "spin", "--spin-frames", "3", "--width", "160")
+    code, records = run("render", BOARDS / "pass-rc-divider", "--out", tmp_path, *args)
+    assert code == 0, records
+    gif = (tmp_path / "render" / "board-spin.gif").read_bytes()
+    assert gif[:6] == b"GIF89a"
+    assert b"NETSCAPE2.0" in gif  # loops
+    assert gif.count(b"\x21\xf9\x04") == 3  # one graphic control block per frame
+    assert not (tmp_path / "render" / "spin-frames").exists()
+
+
+def test_render_spin_without_ffmpeg_skips_with_the_reason(tmp_path, monkeypatch):
+    cli = load_cli_module()
+    which = shutil.which
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None if name == "ffmpeg" else which(name))
+    project = cli.find_project(str(BOARDS / "pass-rc-divider"))
+    result = cli.gate_render(project, tmp_path, views=("spin",))
+    assert result.status == "skip"
+    assert result.details["skipped"] == ["board-spin.gif: ffmpeg missing"]
+
+
 def test_fixtures_match_generator():
     proc = subprocess.run(
         [sys.executable, str(BOARDS / "generate.py"), "--check"], capture_output=True, text=True, check=False
