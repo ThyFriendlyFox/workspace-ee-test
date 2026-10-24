@@ -240,3 +240,20 @@ When: a change is about to be called done.
 
 Done when: the remote has the commit, its CI run is green, and the report
 has been sent.
+
+## P15 — A question that reveals a mismatch
+
+When: a human asks whether the work is a certain way (an orientation, a
+size, a part, a behaviour) and the honest answer is that it is not.
+
+1. Answer the question in one sentence.
+2. Name the mismatch as a decision: what the design does now, what the
+   question assumed, what changing it costs and touches.
+3. If the change is reversible and inside the task's scope (a board
+   revision, a document, a tool default), do it in the same turn and say
+   so. Ask first only when it widens the scope or spends real money.
+4. Never close with "that would be a vN change" and no owner. The reply
+   carries either the change or an explicit question.
+
+Done when: the reply holds the answer and either the finished change or a
+direct question, and nothing is left as a note for later.

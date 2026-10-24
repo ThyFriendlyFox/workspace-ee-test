@@ -121,3 +121,9 @@ What happened: `workcenter gates --json` instead of `workcenter --json gates`; t
 Cost: one wasted command.
 Root cause: a flag used without reading `--help` this session.
 Process: P8
+
+## M19 — 2026-10-24 — Answered a question that was a change request
+What happened: asked whether the USB-C was normal to the board, I explained the v0.2 orientation, noted that a vertical receptacle "would be a v0.3 change", and did nothing. The human had assumed the port was vertical and expected the board to change.
+Cost: a turn of work lost; v0.3 started a day late, after the human asked where it was.
+Root cause: a question that revealed the design differed from what the human assumed was treated as a question to answer, not as a decision to surface and act on.
+Process: P15
