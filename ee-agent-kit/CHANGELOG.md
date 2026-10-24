@@ -20,6 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `tools/wrlgen.py`: `connector-510` (M7 x 0.5 internal thread), `cartridge-510`, `pouch-cell`, `display-module` presets; material transparency.
 - `PROCESSES.md` P18 (firmware that drives power) with M32; `board-design` skill: ground corridors against split pours.
 - `.claude/settings.json`: a PreToolUse hook (`tools/hooks/no_cd.py`) refuses a Bash command that runs `cd` (P8, M31).
+- `tools/hooks/install_hooks.py`: puts the no-cd hook into a Claude Code settings file, user-wide by default, merged and idempotent; run by hand, never by `install.sh`. `workcenter doctor` reports whether the user-wide hook is there (M35).
 - `kicadgen`: keep-out areas (`Design.keepout(polygon, layers, name)`, with `Design.circle(cx, cy, r)` for round ones): a KiCad rule area with no tracks or vias, a Specctra keepout for the router, and a refusal in the via check.
 - `kicadgen`: `Design.corner_radius` rounds the board corners (Edge.Cuts arcs, polygon boundary in the DSN, rounded default pour, corner-aware via check); `Design.model()` attaches a 3D body to a part's footprint.
 - `tools/wrlgen.py`: parametric VRML bodies in KiCad's 0.1 inch units: `usb-c-vertical`, `threaded-stud`.

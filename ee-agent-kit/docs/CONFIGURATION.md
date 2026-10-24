@@ -70,6 +70,12 @@ Every number is millimetres; the file is written in KiCad's VRML unit (0.1 inch)
 | `KICAD_FOOTPRINT_DIR` | path | `/usr/share/kicad/footprints` | Footprint libraries to read. |
 | `FREEROUTING_JAR` | path | `/opt/workcenters/ee/freerouting/freerouting.jar` | Used by `route()`. |
 
+## `tools/hooks/install_hooks.py`
+
+| Flag | Default | Use |
+|---|---|---|
+| `--settings PATH` | `~/.claude/settings.json` | The Claude Code settings file to add the no-cd PreToolUse hook to. Existing settings and hooks are kept; a second run changes nothing. Writes only that file. Run by hand: writing a user's settings is their decision. |
+
 ## `environment/setup.sh`
 
 | Field | Type | Default | Use |

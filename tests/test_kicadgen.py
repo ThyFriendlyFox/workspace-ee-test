@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -364,6 +365,34 @@ def test_hook_refuses_a_bash_command_that_runs_cd(command, blocked):
     assert proc.returncode == (2 if blocked else 0), (command, proc.stderr)
     other = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/x"}})
     assert subprocess.run([sys.executable, str(hook)], input=other, text=True, check=False).returncode == 0
+
+
+def test_hook_installer_merges_once_into_user_settings(tmp_path):
+    """install.sh puts the no-cd hook in the user settings (M35): kept settings, added once, then a no-op."""
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    keep = {"model": "x", "hooks": {"SessionStart": [{"matcher": "startup", "hooks": []}]}}
+    settings.write_text(json.dumps(keep))
+    hook_installer = ROOT / "tools" / "hooks" / "install_hooks.py"
+    run = [sys.executable, str(hook_installer), "--settings", str(settings)]
+    first = subprocess.run(run, capture_output=True, text=True, check=True).stdout
+    second = subprocess.run(run, capture_output=True, text=True, check=True).stdout
+    data = json.loads(settings.read_text())
+    assert "added to" in first and "already in" in second, (first, second)
+    assert data["model"] == "x" and data["hooks"]["SessionStart"] == keep["hooks"]["SessionStart"]
+    hooks = [h["command"] for e in data["hooks"]["PreToolUse"] for h in e["hooks"]]
+    assert len(hooks) == 1 and "no_cd.py" in hooks[0], hooks
+
+    # The doctor reports it from the user settings ($HOME), and a settings file without it as absent.
+    def doctor_sees_hook() -> bool:
+        env = {**os.environ, "HOME": str(tmp_path)}
+        cmd = [sys.executable, str(ROOT / "tools" / "workcenter"), "--json", "doctor"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
+        return json.loads(proc.stdout)["checks"]["no-cd hook"]["ok"]
+
+    assert doctor_sees_hook() is True
+    settings.write_text(json.dumps(keep))
+    assert doctor_sees_hook() is False
 
 
 @needs_libs
