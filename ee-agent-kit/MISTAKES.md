@@ -145,3 +145,45 @@ What happened: a documentation edit command started with `cd repo && ls ... && p
 Cost: one lost command and the diagnosis that explains M20: parallel tool calls share one shell, so `cd` is a race.
 Root cause: `cd` used at all. P8 said absolute paths and still allowed a leading `cd`.
 Process: P8
+
+## M23 — 2026-10-24 — Two wake inputs on one interrupt line
+What happened: the v0.2 to v0.4 pin plans put the service button on PB7 and the puff sensor on PA7. On an STM32 the EXTI line is chosen by pin number, one port at a time, so both share EXTI7 and only one can wake the MCU from Stop. Found while planning v0.5 from ST's open pin data.
+Cost: three board revisions with a pin plan the firmware could not have used; no hardware built.
+Root cause: pins chosen by name and function from memory, without checking the shared resources (EXTI lines, timers, ADC channels) against the vendor's data.
+Process: P16
+
+## M24 — 2026-10-24 — Circle courtyards read as two corners
+What happened: `kicadgen footprint` printed a circle courtyard as the box between its centre and one point on the circle, e.g. (1.25, 0, 1.25, 0) for a 2.5 mm test pad. Nothing checked placement with it, but P1 tells the agent to read geometry from that command.
+Cost: a wrong number in the tool the processes trust; found when the 510 footprint's courtyard read as a point.
+Root cause: the parser treated every courtyard shape's `start`/`end` as corners; no test parsed a footprint with a circle courtyard.
+Process: P7
+
+## M25 — 2026-10-24 — An escape written for the wrong layer of quoting
+What happened: a Python edit script inside a quoted shell heredoc wrote `"\\n"`, meaning a newline; the heredoc passes it through, Python reads a backslash and an `n`, and the test file ended in a stray line-continuation character.
+Cost: one failed test collection and a repair edit.
+Root cause: an escape written for the shell when the text was going straight to Python.
+Process: P9
+
+## M26 — 2026-10-24 — Island stitching put a via against a plastic peg's hole
+What happened: routing Last Hit v0.5, `reserve_vias` placed a ground via 0.2 mm from the USB-C receptacle's non-plated peg hole. The DRC treats a non-plated hole as board edge and wants 0.3 mm; the via check only knew hole-to-hole spacing.
+Cost: one red DRC after routing and a fix in the generator.
+Root cause: the generator's own clearance model for copper it adds did not cover every DRC rule that applies to that copper.
+Process: P17
+
+## M27 — 2026-10-24 — M25 again, minutes after writing its rule
+What happened: another edit script in a quoted heredoc ended a test file with a literal backslash and n; the same script added an assertion that could never fail (`in (True, False)`).
+Cost: a repair with the Edit tool; caught before any commit.
+Root cause: P9 step 5 was read as advice; a test appended by script was not read back before running.
+Process: P9
+
+## M28 — 2026-10-24 — Tracks written for where a part was going to be
+What happened: moving Last Hit v0.5's regulator, its input and output tracks were written in the same edit as the move, with pad x computed for a position 0.4 mm right of where the part was placed. The DRC passed only because the endpoints still fell inside the 1.3 mm pads.
+Cost: a regeneration to put the tracks on the pad centres; on smaller pads it would have been a short.
+Root cause: pad positions of a moved part computed in my head instead of read after the move.
+Process: P1
+
+## M29 — 2026-10-24 — Hand-routed lanes walled off other nets
+What happened: on Last Hit v0.5 a 3.3 V lane drawn 8 mm across the top face above the display pads, and a VBUS lane below them, left the display's SDA pad and a regulator ground pin with no way in; moving a pad onto the router's corridor made it worse. Each fix opened a new link somewhere else.
+Cost: three routing runs and a re-placement of the regulator, which is what fixed it.
+Root cause: a long hand route treated as a local fix; on two layers a track is a wall for every net on its layer that has to cross it.
+Process: P11

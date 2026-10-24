@@ -22,7 +22,9 @@ must clear or land on a pad.
    shield, mounting holes).
 2. Generate the unrouted board and run `workcenter drc .`. The report
    names each pad with its board position. Those positions are the only
-   source for a coordinate; never a position computed in your head.
+   source for a coordinate; never a position computed in your head. A
+   part moved in the same change is regenerated and its pads read after
+   the move; its tracks are never written in the edit that moves it.
 3. A part on `B.Cu` is mirrored about the X axis: at rotation 0 its pad 1
    is on the left and its pads' y are flipped. Confirm against the DRC
    report, every time.
@@ -131,7 +133,9 @@ file another program wrote.
    change.
 2. Derive scales and units from data the file contains (the placement
    block of a session), not from a declaration the writer may not honour.
-3. Keep a real sample of the output in `tests/` and parse it there.
+3. Keep a real sample of the output in `tests/` and parse it there, one
+   for every shape the format allows (a courtyard can be a rectangle,
+   lines, a polygon or a circle).
 
 Done when: a test parses a real sample and the parser's assumptions are
 written next to it.
@@ -167,6 +171,12 @@ Edit tool.
 3. Check every anchor before writing anything; a script that writes the
    first half and fails on the second leaves a file nobody has read.
 4. A change of a few lines goes through the Edit tool after a Read.
+5. Inside a quoted heredoc (`<<'EOF'`) the shell passes text through as
+   written. Write no backslash escapes in it at all: `chr(10)` for a line
+   break, real line breaks inside a triple-quoted string.
+6. Tests are written with the Write or Edit tool, not appended by a
+   script, and read back before they run: every assertion must be able
+   to fail.
 
 Done when: the script reported every anchor found, and the formatter and
 linter pass on the result.
@@ -197,6 +207,10 @@ reservations, or part spacing in a design to help the router.
 3. Adopt only what reduces the open items; revert the rest even when it
    looked right.
 4. Record the numbers in the commit message.
+5. A hand-routed track is a wall on its layer. Before drawing one longer
+   than three pad pitches, list the pads on each side of it whose nets
+   must cross it. If one of them cannot cross on the other layer, move a
+   part instead of drawing the lane.
 
 Done when: the commit says what was measured and the number went down.
 
@@ -267,3 +281,40 @@ size, a part, a behaviour) and the honest answer is that it is not.
 
 Done when: the reply holds the answer and either the finished change or a
 direct question, and nothing is left as a note for later.
+
+## P16 — A pin plan
+
+When: choosing or changing which MCU pin carries which signal.
+
+1. Read the alternate-function table from the vendor's data: ST's open
+   pin data (`STM32_open_pin_data`, the MCU and GPIO-modes XML) or the
+   datasheet. Never from memory.
+2. Write the plan as a table: pin, port, and the exact function each
+   signal uses (AF number and timer channel, ADC channel, EXTI line, I2C
+   or UART instance).
+3. Check the shared resources: no two interrupt or wake inputs on one EXTI
+   line (same pin number, different port); PWM channels that must run
+   together on one timer; analog inputs on ADC channels; no pin in analog
+   mode at reset sees a voltage above VDD; multi-bonded pins (several
+   ports on one package pin) keep the unused ones as inputs.
+4. Write the firmware's pin set-up from the same table and build it.
+
+Done when: the README's pin table names the function of every used pin,
+the shared-resource checks are written next to it, and the firmware that
+configures those pins compiles.
+
+## P17 — Copper the tools add
+
+When: changing code in the workcenter that places copper on its own
+(stitching vias, reserved vias, generated tracks or pours).
+
+1. List every DRC rule that applies to that copper: copper to copper by
+   net, hole to hole, copper to board edge, and non-plated holes, which
+   the DRC treats as board edge.
+2. The placement check covers each rule with the same numbers the board's
+   design rules use, read from the `Design`, not typed again.
+3. One test per rule: place the copper just inside and just outside each
+   kind of obstacle and expect refused and accepted.
+
+Done when: every rule on the list has a test, and a routed board with the
+change passes the DRC with no item placed by the tool.

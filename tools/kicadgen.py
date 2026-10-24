@@ -8,6 +8,10 @@ router's session file back into the board. Standard library only.
 
     python3 tools/kicadgen.py pins Device:R MCU_ST_STM32G0:STM32G031F8Px
     python3 tools/kicadgen.py footprint Package_SO:TSSOP-20_4.4x6.5mm_P0.65mm
+    python3 tools/kicadgen.py footprint --lib LastHit=footprints/LastHit.pretty LastHit:Connector_510
+
+A project keeps its own footprints in a `.pretty` folder and names it in
+`Design.footprint_dirs`; the generated project gets an `fp-lib-table` for it.
 
 Coordinates are millimetres. Schematic y grows downward (KiCad); symbol
 library y grows upward and is flipped on placement. Board rotation keeps
@@ -310,9 +314,11 @@ class Footprint:
         return f"{self.lib}:{self.name}"
 
 
-def load_footprint(lib_id: str) -> Footprint:
+def load_footprint(lib_id: str, dirs: dict[str, Path] | None = None) -> Footprint:
+    """A footprint by `Lib:Name`, from `dirs[Lib]` when the project names that library, else KiCad's."""
     lib, name = lib_id.split(":", 1)
-    node = parse((FOOTPRINT_DIR / f"{lib}.pretty" / f"{name}.kicad_mod").read_text(encoding="utf-8"))
+    base = Path(dirs[lib]) if dirs and lib in dirs else FOOTPRINT_DIR / f"{lib}.pretty"
+    node = parse((base / f"{name}.kicad_mod").read_text(encoding="utf-8"))
     _strip_tokens(node, DROP_FOOTPRINT_TOKENS)
     node[1] = Q(lib_id)
     pads: list[Pad] = []
@@ -348,6 +354,14 @@ def load_footprint(lib_id: str) -> Footprint:
         layer = child(shape, "layer")
         if not layer or atoms(layer)[0] not in ("F.CrtYd", "B.CrtYd"):
             continue
+        if shape[0] == "fp_circle":  # (center) and a point on the circle, not two corners
+            c, e = child(shape, "center"), child(shape, "end")
+            if c and e:
+                cx, cy = num(atoms(c)[0]), num(atoms(c)[1])
+                r = math.hypot(num(atoms(e)[0]) - cx, num(atoms(e)[1]) - cy)
+                xs.extend((cx - r, cx + r))
+                ys.extend((cy - r, cy + r))
+            continue
         for head in ("start", "end"):
             pt = child(shape, head)
             if pt:
@@ -366,6 +380,15 @@ def load_footprint(lib_id: str) -> Footprint:
 # ---------------------------------------------------------------- design
 
 POWER_LIB = "power"
+
+
+def _inside_polygon(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
+    """Even-odd point-in-polygon test."""
+    inside = False
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1], strict=True):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
 
 
 def _seg_dist(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -444,7 +467,10 @@ class Design:
     track_width: float = 0.25
     clearance: float = 0.2
     edge_clearance: float = 0.3
-    corner_radius: float = 0.0  # rounded board corners; 0 is a plain rectangle
+    corner_radius: float = 0.0  # rounded board corners; 0 a rectangle, half the short side a stadium
+    footprint_dirs: dict[str, Path] = field(
+        default_factory=dict
+    )  # project footprint libraries: name -> .pretty
     via_size: float = 0.6
     via_drill: float = 0.3
     # name -> {"width", "clearance", "via", "via_drill", "nets": [...]} for nets that need more copper
@@ -461,6 +487,7 @@ class Design:
     )  # text, x, y, layer, size, thickness
     rules: dict[str, float] = field(default_factory=dict)  # overrides for board.design_settings.rules
     zones: list[dict] = field(default_factory=list)  # copper pours, see zone()
+    keepouts: list[dict] = field(default_factory=list)  # areas no track or via enters, see keepout()
     islands: list[list[str]] = field(default_factory=list)  # pads cut off from their pour, set by write()
     _symcache: dict[str, Symbol] = field(default_factory=dict, repr=False)
     _fpcache: dict[str, Footprint] = field(default_factory=dict, repr=False)
@@ -477,7 +504,7 @@ class Design:
 
     def fp(self, lib_id: str) -> Footprint:
         if lib_id not in self._fpcache:
-            self._fpcache[lib_id] = load_footprint(lib_id)
+            self._fpcache[lib_id] = load_footprint(lib_id, self.footprint_dirs)
         return self._fpcache[lib_id]
 
     def add(
@@ -546,11 +573,23 @@ class Design:
 
     # ---- outline
 
+    def _corner_r(self) -> float:
+        """The corner radius, checked: at most half the short side (a stadium), never negative."""
+        x1, y1, x2, y2 = self.outline
+        r = self.corner_radius
+        if r < 0 or r > min(x2 - x1, y2 - y1) / 2 + 1e-9:
+            raise ValueError(f"corner_radius {r} must be between 0 and half the board's short side")
+        return r
+
     def outline_polygon(self, inset: float = 0.0, n: int = 8) -> list[tuple[float, float]]:
-        """The board outline shrunk by `inset`, clockwise; a rounded corner becomes `n` segments."""
+        """The board outline shrunk by `inset`, clockwise; a rounded corner becomes `n` segments.
+
+        A stadium (radius half the short side) has no straight ends: the arcs meet, and the point
+        they share is listed once.
+        """
         x1, y1, x2, y2 = self.outline
         x1, y1, x2, y2 = x1 + inset, y1 + inset, x2 - inset, y2 - inset
-        r = max(0.0, self.corner_radius - inset)
+        r = max(0.0, self._corner_r() - inset)
         if r <= 0:
             return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
         corners = [
@@ -563,7 +602,11 @@ class Design:
         for (cx, cy), a0 in corners:
             for i in range(n + 1):
                 a = math.radians(a0 + 90.0 * i / n)
-                pts.append((round(cx + r * math.cos(a), 4), round(cy + r * math.sin(a), 4)))
+                pt = (round(cx + r * math.cos(a), 4), round(cy + r * math.sin(a), 4))
+                if not pts or math.hypot(pt[0] - pts[-1][0], pt[1] - pts[-1][1]) > 1e-6:
+                    pts.append(pt)
+        if len(pts) > 1 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) <= 1e-6:
+            pts.pop()
         return pts
 
     def inside_outline(self, x: float, y: float, margin: float = 0.0) -> bool:
@@ -571,7 +614,7 @@ class Design:
         x1, y1, x2, y2 = self.outline
         if not (x1 + margin <= x <= x2 - margin and y1 + margin <= y <= y2 - margin):
             return False
-        r = self.corner_radius
+        r = self._corner_r()
         rr = r - margin
         if rr <= 0:
             return True
@@ -582,9 +625,12 @@ class Design:
         return math.hypot(x - cx, y - cy) <= rr
 
     def _edge_cuts(self, ns: uuid.UUID) -> list[Node]:
-        """The Edge.Cuts graphics: one rectangle, or four lines and four arcs when the corners are round."""
+        """The Edge.Cuts graphics: one rectangle, or four lines and four arcs when the corners are round.
+
+        A stadium drops the two lines that would have no length.
+        """
         x1, y1, x2, y2 = self.outline
-        r = self.corner_radius
+        r = self._corner_r()
 
         def stroke() -> Node:
             return ["stroke", ["width", "0.1"], ["type", "default"]]
@@ -616,6 +662,8 @@ class Design:
         ]
         out: list[Node] = []
         for i, ((sx, sy), (ex, ey)) in enumerate(lines):
+            if math.hypot(ex - sx, ey - sy) < 1e-6:
+                continue  # a stadium's end: the two arcs meet here
             out.append(
                 [
                     "gr_line",
@@ -821,11 +869,26 @@ class Design:
         boxes: list[PadBox],
         tracks: bool = True,
     ) -> bool:
-        """Clearance check for a via at (vx, vy): board edge, other nets' pads, holes, vias and tracks."""
+        """Clearance check for a via at (vx, vy): board edge, other nets' pads, holes, vias and tracks.
+
+        A non-plated hole is board edge to the DRC: the via's copper keeps `edge_clearance` from the
+        hole's outline (its box, which covers an oval peg), whatever the net.
+        """
         if not self.inside_outline(vx, vy, self.edge_clearance + r):
             return False
+        for k in self.keepouts:  # a via spans every layer, so any keepout refuses it
+            poly = k["polygon"]
+            edges = zip(poly, poly[1:] + poly[:1], strict=True)
+            if _inside_polygon(vx, vy, poly) or min(_seg_dist((vx, vy), a, b) for a, b in edges) < r:
+                return False
         c = self.clearance
         for pad in boxes:
+            if pad.kind == "np_thru_hole":
+                dx = max(pad.x1 - vx, 0.0, vx - pad.x2)
+                dy = max(pad.y1 - vy, 0.0, vy - pad.y2)
+                if math.hypot(dx, dy) < max(r + self.edge_clearance, drill / 2 + 0.25):
+                    return False
+                continue
             if (
                 pad.drill
                 and math.hypot(vx - (pad.x1 + pad.x2) / 2, vy - (pad.y1 + pad.y2) / 2)
@@ -845,6 +908,38 @@ class Design:
             if tracks and n != pcb_net and _seg_dist((vx, vy), (sx, sy), (ex, ey)) < r + w / 2 + c:
                 return False
         return True
+
+    def keepout(
+        self, polygon: list[tuple[float, float]], layers: tuple[str, ...] = ("F.Cu",), name: str = ""
+    ) -> None:
+        """An area no track or via may enter on `layers` (a metal shell sitting on the board).
+
+        Pads and pours may: a ground pour under a grounded shell is what the area is for. KiCad gets a
+        rule area, the router a Specctra keepout, and the generator's own via checks honour it.
+        """
+        for layer in layers:
+            if layer not in ("F.Cu", "B.Cu"):
+                raise ValueError(f"keepout layer must be F.Cu or B.Cu, not {layer!r}")
+        if len(polygon) < 3:
+            raise ValueError("keepout needs a polygon of at least 3 points")
+        self.keepouts.append(
+            {
+                "polygon": [(float(x), float(y)) for x, y in polygon],
+                "layers": tuple(layers),
+                "name": name or f"keepout{len(self.keepouts) + 1}",
+            }
+        )
+
+    @staticmethod
+    def circle(cx: float, cy: float, r: float, n: int = 24) -> list[tuple[float, float]]:
+        """A circle as an `n`-sided polygon, for keepouts and zones."""
+        return [
+            (
+                round(cx + r * math.cos(2 * math.pi * i / n), 4),
+                round(cy + r * math.sin(2 * math.pi * i / n), 4),
+            )
+            for i in range(n)
+        ]
 
     def zone(
         self,
@@ -1444,6 +1539,31 @@ class Design:
                     ["polygon", ["pts", *[["xy", fmt(px), fmt(py)] for px, py in z["polygon"]]]],
                 ]
             )
+        for i, k in enumerate(self.keepouts):
+            pcb.append(
+                [
+                    "zone",
+                    ["net", "0"],
+                    ["net_name", Q("")],
+                    ["layers", *[Q(layer) for layer in k["layers"]]],
+                    ["uuid", uid(ns, f"keepout/{i}")],
+                    ["name", Q(k["name"])],
+                    ["hatch", "edge", "0.5"],
+                    ["connect_pads", ["clearance", "0"]],
+                    ["min_thickness", "0.25"],
+                    ["filled_areas_thickness", "no"],
+                    [
+                        "keepout",
+                        ["tracks", "not_allowed"],
+                        ["vias", "not_allowed"],
+                        ["pads", "allowed"],
+                        ["copperpour", "allowed"],
+                        ["footprints", "allowed"],
+                    ],
+                    ["fill", ["thermal_gap", "0.5"], ["thermal_bridge_width", "0.5"]],
+                    ["polygon", ["pts", *[["xy", fmt(px), fmt(py)] for px, py in k["polygon"]]]],
+                ]
+            )
         pcb.append(["embedded_fonts", "no"])
         return dumps(pcb) + "\n"
 
@@ -1691,6 +1811,13 @@ class Design:
             for z in self.zones
             for layer in z["layers"]
         ]
+        keepouts = [
+            f'    (keepout "{k["name"]}" (polygon {layer} 0 '
+            + " ".join(f"{c(px)} {c(-py)}" for px, py in k["polygon"])
+            + "))"
+            for k in self.keepouts
+            for layer in k["layers"]
+        ]
         return "\n".join(
             [
                 f'(pcb "{self.name}.dsn"',
@@ -1704,6 +1831,7 @@ class Design:
                 boundary,
                 "    )",
                 *planes,
+                *keepouts,
                 *[f'    (via "{n}")' for n in vias],
                 f"    (rule (width {c(self.track_width)}) (clearance {c(self.clearance)}) "
                 f"(clearance {c(self.clearance)} (type default_smd)) (clearance {c(self.clearance / 2)} (type smd_smd)))",
@@ -1850,6 +1978,18 @@ class Design:
         }
         for p, text in files.items():
             p.write_text(text, encoding="utf-8")
+        if self.footprint_dirs:  # so KiCad finds the project's own footprints when the board is opened
+            rows = []
+            for lib, d in sorted(self.footprint_dirs.items()):
+                d = Path(d).resolve()
+                try:
+                    uri = "${KIPRJMOD}/" + d.relative_to(out_dir.resolve()).as_posix()
+                except ValueError:
+                    uri = d.as_posix()
+                rows.append(f'  (lib (name "{lib}")(type "KiCad")(uri "{uri}")(options "")(descr ""))')
+            table = out_dir / "fp-lib-table"
+            table.write_text("(fp_lib_table\n  (version 7)\n" + "\n".join(rows) + "\n)\n", encoding="utf-8")
+            files[table] = table.read_text(encoding="utf-8")
         if self.zones:
             pcb = out_dir / f"{self.name}.kicad_pcb"
             fill_zones(pcb)
@@ -2142,8 +2282,17 @@ def main(argv: list[str]) -> int:
                 )
         return 0
     if len(argv) >= 2 and argv[0] == "footprint":
-        for lib_id in argv[1:]:
-            fp = load_footprint(lib_id)
+        dirs: dict[str, Path] = {}
+        ids: list[str] = []
+        rest = iter(argv[1:])
+        for a in rest:
+            if a == "--lib":  # --lib NAME=DIR: a project footprint library
+                name, _, d = next(rest, "").partition("=")
+                dirs[name] = Path(d)
+            else:
+                ids.append(a)
+        for lib_id in ids:
+            fp = load_footprint(lib_id, dirs)
             print(f"== {fp.lib_id}  courtyard={fp.courtyard}")
             for pad in fp.pads:
                 print(
