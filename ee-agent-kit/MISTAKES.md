@@ -199,3 +199,9 @@ What happened: a pytest command started with `cd /home/user/workspace-ee-test;`,
 Cost: none this time; the same slip cost lost edits in M20 and M22.
 Root cause: P8 was a rule only the agent checked.
 Process: P8
+
+## M32 — 2026-10-24 — Firmware draft bugs, and tests that could not fail
+What happened: the first draft of Last Hit's firmware let a shorted coil run for up to 2 ms before the overcurrent cut (the PWM period was not restarted when a channel turned on), retried a dead display forever (keeping the MCU awake), and would have lit the display again after about 25 days idle (a millisecond comparison across the counter's wrap). Three test checks could never fail. All were found before hand-off: the bugs in review, the checks by breaking the code on purpose (29 mutations, each caught by a named test).
+Cost: rework inside the firmware task; none of it shipped.
+Root cause: no checklist for the failures embedded code repeats (the exposure window of a safety cut, unbounded retries, counter wrap), and tests not proven able to fail.
+Process: P18

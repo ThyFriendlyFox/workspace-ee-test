@@ -112,6 +112,11 @@ project and routes it with FreeRouting. No GUI at any step.
    - A ground pad cut off from the pour: the design command already
      routes again with a via reserved beside it (`--rounds`); if it still
      reports the island, move the walling track or the part.
+   - Pours split into halves (a column of tracks across the board on both
+     faces): keep a ground corridor, a `d.keepout` strip along one edge of
+     one face with tracks and vias forbidden and the pour allowed. The pour
+     then runs end to end on that face and every island on the other face
+     can be stitched to it.
 6. **Gates.** `workcenter gates .` until GREEN. `workcenter render .` for
    the images: schematic, both faces, 3D top, bottom and isometric. Commit
    `design.py`, any `models/*.wrl`, and the generated `.kicad_*` files

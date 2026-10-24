@@ -323,3 +323,22 @@ When: changing code in the workcenter that places copper on its own
 
 Done when: every rule on the list has a test, and a routed board with the
 change passes the DRC with no item placed by the tool.
+
+## P18 — Firmware that drives power
+
+When: writing or changing firmware that switches a heater, a motor, a
+charger, or any other load from a battery.
+
+1. For every safety cut-off, write down the worst-case time from the fault
+   to the cut, and test it against a fake timer on the host.
+2. Every retry has a limit and a give-up state; a dead peripheral must not
+   keep the MCU awake or the load on.
+3. Every elapsed-time comparison is wrap-safe (subtract, then compare),
+   and a test runs the counter across its wrap.
+4. Prove the tests can fail: break each safety behaviour once (a mutation
+   script kept with the firmware) and see a named test fail.
+5. Every output that drives a load is off at reset, in every fault
+   handler, and when the loop that commands it stops (a deadman).
+
+Done when: the host tests cover steps 1, 2, 3 and 5, the mutation run
+catches every mutation, and the cut-off times are in the firmware README.
