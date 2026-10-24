@@ -131,7 +131,9 @@ file another program wrote.
    change.
 2. Derive scales and units from data the file contains (the placement
    block of a session), not from a declaration the writer may not honour.
-3. Keep a real sample of the output in `tests/` and parse it there.
+3. Keep a real sample of the output in `tests/` and parse it there, one
+   for every shape the format allows (a courtyard can be a rectangle,
+   lines, a polygon or a circle).
 
 Done when: a test parses a real sample and the parser's assumptions are
 written next to it.
@@ -167,6 +169,9 @@ Edit tool.
 3. Check every anchor before writing anything; a script that writes the
    first half and fails on the second leaves a file nobody has read.
 4. A change of a few lines goes through the Edit tool after a Read.
+5. Inside a quoted heredoc (`<<'EOF'`) the shell passes text through as
+   written: write escapes for the language that reads them, or avoid them
+   (`chr(10)`, real line breaks in a triple-quoted string).
 
 Done when: the script reported every anchor found, and the formatter and
 linter pass on the result.
@@ -267,3 +272,24 @@ size, a part, a behaviour) and the honest answer is that it is not.
 
 Done when: the reply holds the answer and either the finished change or a
 direct question, and nothing is left as a note for later.
+
+## P16 — A pin plan
+
+When: choosing or changing which MCU pin carries which signal.
+
+1. Read the alternate-function table from the vendor's data: ST's open
+   pin data (`STM32_open_pin_data`, the MCU and GPIO-modes XML) or the
+   datasheet. Never from memory.
+2. Write the plan as a table: pin, port, and the exact function each
+   signal uses (AF number and timer channel, ADC channel, EXTI line, I2C
+   or UART instance).
+3. Check the shared resources: no two interrupt or wake inputs on one EXTI
+   line (same pin number, different port); PWM channels that must run
+   together on one timer; analog inputs on ADC channels; no pin in analog
+   mode at reset sees a voltage above VDD; multi-bonded pins (several
+   ports on one package pin) keep the unused ones as inputs.
+4. Write the firmware's pin set-up from the same table and build it.
+
+Done when: the README's pin table names the function of every used pin,
+the shared-resource checks are written next to it, and the firmware that
+configures those pins compiles.

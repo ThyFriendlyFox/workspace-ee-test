@@ -443,11 +443,67 @@ def test_wrlgen_bodies_are_valid_vrml_in_kicad_units(tmp_path):
 
 @needs_libs
 @needs_kicad
-def test_rounded_board_passes_drc_except_for_routing(tmp_path):
+@pytest.mark.parametrize("radius", [2.0, 5.0])  # rounded corners, and a stadium (half the 10 mm side)
+def test_rounded_board_passes_drc_except_for_routing(tmp_path, radius):
     d = divider()
-    d.corner_radius = 2.0
+    d.corner_radius = radius
     d.write(tmp_path)
     code, gates = run_cli("drc", tmp_path)
     drc = next(g for g in gates if g["gate"] == "drc")
     assert drc["details"]["counts"]["violations"]["error"] == 0, drc  # the arcs close the outline
     assert "invalid_outline" not in json.dumps(drc)
+
+
+# --------------------------------------------- project footprints and stadiums
+
+
+@needs_libs
+def test_project_footprint_library_is_loaded_and_tabled(tmp_path):
+    lib = tmp_path / "fp" / "Mine.pretty"
+    lib.mkdir(parents=True)
+    src = kicadgen.FOOTPRINT_DIR / "TestPoint.pretty" / "TestPoint_THTPad_D1.5mm_Drill0.7mm.kicad_mod"
+    name = "TestPoint_THTPad_D1.5mm_Drill0.7mm"
+    (lib / "Wire_Pad.kicad_mod").write_text(src.read_text().replace(f'"{name}"', '"Wire_Pad"', 1))
+    d = divider()
+    d.footprint_dirs = {"Mine": lib}
+    d.add(
+        "TP1",
+        "Connector:TestPoint",
+        "W",
+        "Mine:Wire_Pad",
+        sch_at=(50.8, 76.2),
+        pcb_at=(110.5, 108.5),
+        nets={"1": "GND"},
+    )
+    assert d.fp("Mine:Wire_Pad").courtyard == (-1.25, -1.25, 1.25, 1.25)  # a circle: centre and radius
+    out = tmp_path / "proj"
+    d.write(out)
+    table = (out / "fp-lib-table").read_text()
+    assert '(name "Mine")' in table and "Mine.pretty" in table
+    assert '(footprint "Mine:Wire_Pad"' in (out / "gen_divider.kicad_pcb").read_text()
+    assert kicadgen.main(["footprint", "--lib", f"Mine={lib}", "Mine:Wire_Pad"]) == 0
+
+
+@needs_libs
+def test_stadium_outline_drops_the_end_lines_and_shared_points():
+    d = divider()  # 12 x 10 mm
+    d.corner_radius = 5.0
+    board = d.board()
+    assert board.count("(gr_arc") == 4 and board.count("(gr_line") == 2  # no zero-length ends
+    poly = d.outline_polygon()
+    assert len(poly) == len(set(poly)) == 4 * 9 - 2  # the arcs meet at both ends; each point once
+    assert d.inside_outline(106.0, 105.0, 0.5) and not d.inside_outline(100.6, 100.6, 0.3)
+    d.corner_radius = 5.1
+    with pytest.raises(ValueError):
+        d.outline_polygon()
+
+
+def test_wrlgen_510_presets_have_an_internal_thread_and_glass(tmp_path):
+    collar = wrlgen.connector_510()[0]
+    bore = [math.hypot(x, y) for x, y, z in collar.vertices if 0.7 < z < 3.9 and math.hypot(x, y) < 4.0]
+    assert 3.22 < min(bore) < 3.24 and 3.49 < max(bore) < 3.51  # M7 x 0.5: crests at the minor radius
+    out = tmp_path / "cart.wrl"
+    wrlgen.write_wrl(out, wrlgen.cartridge_510(), "test")
+    assert "transparency 0.60" in out.read_text()  # the glass tank shows the oil
+    for preset in ("connector-510", "cartridge-510", "pouch-cell", "display-module"):
+        assert wrlgen.main([preset, str(tmp_path / f"{preset}.wrl")]) == 0

@@ -55,7 +55,13 @@ project and routes it with FreeRouting. No GUI at any step.
    - `corner_radius=` on `Design` rounds the board corners; the outline becomes
      four lines and four arcs, the router's boundary and the default pour
      follow them, and the via check knows the corners. Pads near a corner
-     need `edge_clearance` from the arc, not from the rectangle.
+     need `edge_clearance` from the arc, not from the rectangle. Half the
+     short side makes a stadium (round ends, two arcs meeting).
+   - A part the library lacks gets a project footprint: a `.pretty` folder
+     in the project, named in `d.footprint_dirs = {"Name": path}` and used
+     as `"Name:Footprint"`. Read it with
+     `python3 tools/kicadgen.py footprint --lib Name=path Name:Footprint`
+     before placing; the generated project gets an `fp-lib-table` for it.
    - `d.model(ref, "${KIPRJMOD}/models/x.wrl")` gives a part a 3D body for the
      renders and the STEP export when the library has none (vertical
      receptacles, wire pads with a stud). `python3 tools/wrlgen.py` writes

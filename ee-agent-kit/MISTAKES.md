@@ -145,3 +145,21 @@ What happened: a documentation edit command started with `cd repo && ls ... && p
 Cost: one lost command and the diagnosis that explains M20: parallel tool calls share one shell, so `cd` is a race.
 Root cause: `cd` used at all. P8 said absolute paths and still allowed a leading `cd`.
 Process: P8
+
+## M23 — 2026-10-24 — Two wake inputs on one interrupt line
+What happened: the v0.2 to v0.4 pin plans put the service button on PB7 and the puff sensor on PA7. On an STM32 the EXTI line is chosen by pin number, one port at a time, so both share EXTI7 and only one can wake the MCU from Stop. Found while planning v0.5 from ST's open pin data.
+Cost: three board revisions with a pin plan the firmware could not have used; no hardware built.
+Root cause: pins chosen by name and function from memory, without checking the shared resources (EXTI lines, timers, ADC channels) against the vendor's data.
+Process: P16
+
+## M24 — 2026-10-24 — Circle courtyards read as two corners
+What happened: `kicadgen footprint` printed a circle courtyard as the box between its centre and one point on the circle, e.g. (1.25, 0, 1.25, 0) for a 2.5 mm test pad. Nothing checked placement with it, but P1 tells the agent to read geometry from that command.
+Cost: a wrong number in the tool the processes trust; found when the 510 footprint's courtyard read as a point.
+Root cause: the parser treated every courtyard shape's `start`/`end` as corners; no test parsed a footprint with a circle courtyard.
+Process: P7
+
+## M25 — 2026-10-24 — An escape written for the wrong layer of quoting
+What happened: a Python edit script inside a quoted shell heredoc wrote `"\\n"`, meaning a newline; the heredoc passes it through, Python reads a backslash and an `n`, and the test file ended in a stray line-continuation character.
+Cost: one failed test collection and a repair edit.
+Root cause: an escape written for the shell when the text was going straight to Python.
+Process: P9
