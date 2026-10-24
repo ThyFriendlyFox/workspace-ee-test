@@ -400,3 +400,25 @@ switch) or changing its rating.
 
 Done when: every value on the list cites the new part's rating in the
 README.
+
+## P21 — Moving files in a project
+
+When: moving or renaming files or folders in a project: a version into
+its own folder, a script into a subfolder, a library to a new path.
+
+1. Before the move, list every path a moved file computes from its own
+   location and every reference to a moved file from elsewhere:
+   `grep -rn -E '__file__|\.parent|parents\[|\.\./|KIPRJMOD'` over the
+   moved files, and a grep for each moved name over READMEs, CI and
+   library tables. Read every hit in full; a line that uses a path is not
+   the line that builds it.
+2. After the move, run every command the moved files' READMEs name from
+   the new location, not only the ones CI runs. A script CI never runs
+   breaks without a red check.
+3. Diff each moved or restored folder against the commit it came from
+   (`git archive <commit> | tar -x` into the scratchpad, then
+   `diff -rq`). The only differences are the ones the commit message
+   names.
+
+Done when: every command the READMEs name ran from the new location, and
+the diff against each source commit shows only the named edits.
