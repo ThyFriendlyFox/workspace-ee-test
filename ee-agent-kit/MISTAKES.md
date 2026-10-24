@@ -127,3 +127,9 @@ What happened: asked whether the USB-C was normal to the board, I explained the 
 Cost: a turn of work lost; v0.3 started a day late, after the human asked where it was.
 Root cause: a question that revealed the design differed from what the human assumed was treated as a question to answer, not as a decision to surface and act on.
 Process: P15
+
+## M20 — 2026-10-24 — Pushed behind a look at the log instead of the verify verdict
+What happened: the verify run for M19 never ran (`cd` in a backgrounded command did not take, and `make` ran in the wrong directory), and the commit-and-push chain was gated on `tail` of the log, which succeeds whatever the log says. The branch reached the remote without a green verify.
+Cost: a second verify run and this entry; no red CI, because the change was documentation and the kit checks passed afterwards.
+Root cause: the push was chained behind reading a log instead of behind the verify's own verdict, and a relative working directory was trusted in a background shell.
+Process: P14
