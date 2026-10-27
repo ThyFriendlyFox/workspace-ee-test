@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 
 ## [Unreleased]
 ### Added
+- `kicadgen`: wired schematics (`Design.sch_wires`): a grid router (`SchRouter`) draws each net's wires round the parts, with junctions at tees, power symbols pointing away from their pins, and each net's name on its wire; `sch_rot` turns a symbol, `sch_label_nets` keeps labels for chosen nets, `sheet` picks the paper. Off by default, so existing schematics regenerate byte for byte (M51, P24).
+- `workcenter render` names every part the 3D views draw without a body; `render --strict` fails on one (M52).
+- `wrlgen`: `leadless` (QFN, DFN, SON) and `gullwing` (SOT-23, SOT-523, SC-70) bodies for packages whose library body KiCad does not ship.
 - `tools/kicadgen.py`: design a KiCad 10 schematic and board in Python from the installed libraries; writes project, schematic, board, Specctra DSN; merges a routed session.
 - `workcenter design <design.py> [--route]`: build a design file, optionally route it headless with FreeRouting.
 - `workcenter render <project>`: schematic, board top and bottom, 3D top and isometric images.

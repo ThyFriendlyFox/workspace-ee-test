@@ -41,6 +41,28 @@ Evidence: <commit / tag / gate run / screenshot>
 
 <!-- Entries below, newest first. -->
 
+## 2026-10-27 — Schematics with wires, and the parts the 3D views left out
+
+The user looked at the Last Hit board and found two things the gates never
+did. The schematic was a list of parts with a net name on every pin and no
+wire between them; they put it beside a Commodore 64 service sheet. And the
+board's underside had no microcontroller in the 3D pictures: KiCad's
+footprints name 3D bodies its library does not ship, for three of the
+packages we use, and the renders drew bare pads without a word.
+
+The generator now draws wires. A small grid router joins the pins of each
+net round the parts, puts a dot where wires tee, turns each power symbol
+away from its pin, and writes the net's name once along its wire so the
+schematic and the board agree on names. It is off unless a design asks, so
+every older version's schematic comes out exactly as before. The first try
+drew a power symbol's wire through a neighbouring pin and shorted 3.3 V to
+ground; ERC caught it before anything was kept. `workcenter render` now
+lists every part drawn without a body, and the model generator makes small
+QFN, DFN and SOT bodies from the package drawing.
+
+Evidence: `make verify` green on the branch; the Last Hit v0.10 schematics,
+ERC 0/0 and no parity warning; M51, M52, P24.
+
 ## 2026-10-23 — The board shrank to an inch and the tools had to grow up
 
 The first board was 22 by 46 millimetres, parts on one face, headers for

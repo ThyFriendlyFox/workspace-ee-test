@@ -41,6 +41,25 @@ project and routes it with FreeRouting. No GUI at any step.
    - Every unused pin is left out of `nets`; the generator places a
      no-connect and names its pad net the way KiCad does, so parity passes.
    - Schematic positions on the 1.27 mm grid, as multiples of 2.54.
+   - **The schematic is a drawing someone reads** (P24). Set `d.sch_wires =
+     True`: the generator draws wires between the pins of each net round the
+     parts, a junction dot at each tee, every power pin's symbol pointing away
+     from its part, and each net's name once along its wire. Without it every
+     pin gets a stub and a label and nothing is joined on the page. Lay the
+     parts out in blocks the way the signal flows, power left to right
+     along the top, as a schematic in a service manual does: keep a table
+     `SCHEMATIC = {ref: (x, y, angle)}` in 2.54 mm steps and apply it after
+     the parts are added (`part.sch_at`, `part.sch_rot`). `sch_rot` turns a
+     symbol 90, 180 or 270 degrees counter-clockwise, as KiCad shows it: a
+     resistor at 90 has pin 1 on the left. Turn two-pin parts so the end
+     that joins a wire faces it, put each decoupling or pull part beside the
+     pin it serves, and let a connector face the circuit it feeds.
+     `d.sch_label_nets` keeps labels for nets that cross the whole sheet;
+     a pin no wire reaches gets a label by itself. `d.sheet` picks the paper
+     (A4 to A1). The generator raises on a pin off the grid, two pins on one
+     point, or a pin whose first cell out is taken: move the part. Plot the
+     sheet (`workcenter render . --views schematic`) and read it before the
+     close-out.
    - `d.net_classes` for heavy nets. The widest track that enters a pad is
      the pad pitch minus the pad width minus 2 x clearance: 0.6 mm for
      SOT-23 and 0603, 0.5 mm for 0402, 0.4 mm for TSSOP. Put the ADC sense
@@ -90,6 +109,12 @@ project and routes it with FreeRouting. No GUI at any step.
      parametric bodies (`usb-c-vertical`, `threaded-stud`) in KiCad's VRML
      units; keep them in the project under `models/` with the command that
      made them.
+   - KiCad's library footprints name 3D bodies its 3D library does not ship
+     (QFN-28 4 x 4 mm without a pad, DFN-8 3 x 2 mm, SOT-523): those parts
+     render as bare pads. `workcenter render` names each one ("parts drawn
+     without a 3D body"); give each a body with `wrlgen leadless` (QFN, DFN,
+     SON) or `wrlgen gullwing` (SOT-23, SOT-523, SC-70) sized from the
+     package drawing, attached with `d.model(ref, path, replace=True)`.
    - A model's rotation in KiCad 10 turns each axis the opposite way from
      the right-hand rule, about the footprint's fixed axes, x before z; its
      offset has y up. A board exported with `kicad-cli pcb export vrml`
@@ -165,6 +190,9 @@ project and routes it with FreeRouting. No GUI at any step.
   2 pins before nets were assigned.
 - ERC: 0 errors and 0 warnings. Library-table warnings are suppressed in
   the generated project because every symbol and footprint is embedded.
+- The schematic is wired (`sch_wires`) and its plot was read; DRC shows no
+  parity warning (each wired net carries its own name).
+- `workcenter render` names no part drawn without a 3D body.
 - DRC: 0 errors. Silkscreen warnings near board edges are acceptable;
   clearance and courtyard warnings are not.
 - The design file is the only hand-written source; nobody edits the

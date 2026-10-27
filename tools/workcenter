@@ -52,6 +52,7 @@ LAYER_IMAGES = (
 LAYER_BACKGROUND = "#001023"  # KiCad's board-editor background: silkscreen and courtyards stay visible
 DRAWN = re.compile(r"<(path|circle|polygon|polyline|rect|line|ellipse|text)\b")
 SPIN_WIDTH = 640  # GIF frames: wider ones make a GIF of tens of megabytes
+DEFAULT_3DMODEL_DIR = "/usr/share/kicad/3dmodels"  # where the PPA's kicad-packages3d puts the library bodies
 
 
 @dataclass
@@ -441,6 +442,64 @@ def gate_autoroute(
     )
 
 
+def footprint_blocks(text: str) -> list[str]:
+    """The top-level `(footprint ...)` nodes of a .kicad_pcb, as text, read by bracket depth with
+    quoted strings skipped, so a bracket inside a property value cannot cut a block short."""
+    blocks: list[str] = []
+    depth, start, i, quoted = 0, -1, 0, False
+    while i < len(text):
+        ch = text[i]
+        if quoted:
+            if ch == "\\":
+                i += 1
+            elif ch == '"':
+                quoted = False
+        elif ch == '"':
+            quoted = True
+        elif ch == "(":
+            depth += 1
+            if depth == 2 and text.startswith("(footprint ", i):
+                start = i
+        elif ch == ")":
+            if depth == 2 and start >= 0:
+                blocks.append(text[start : i + 1])
+                start = -1
+            depth -= 1
+        i += 1
+    return blocks
+
+
+def parts_without_body(project: Project) -> list[dict]:
+    """Parts whose footprint names 3D models of which none exists on disk: the 3D views draw their pads
+    bare. Paths resolve the way KiCad's do: ${KIPRJMOD} is the project folder, a ${KICADn_3DMODEL_DIR}
+    is that environment variable or the installed library."""
+    QUOTED = r'"((?:[^"\\]|\\.)*)"'
+
+    def resolve(path: str) -> Path:
+        def var(m: re.Match) -> str:
+            name = m.group(1)
+            if name == "KIPRJMOD":
+                return str(project.dir)
+            if name.endswith("3DMODEL_DIR"):
+                return os.environ.get(name, DEFAULT_3DMODEL_DIR)
+            return os.environ.get(name, m.group(0))
+
+        p = Path(re.sub(r"\$\{(\w+)\}", var, path))
+        return p if p.is_absolute() else project.dir / p
+
+    bare = []
+    for block in footprint_blocks(project.pcb.read_text(encoding="utf-8")):
+        models = re.findall(r"\(model " + QUOTED, block)
+        if not models or any(resolve(m).is_file() for m in models):
+            continue
+        ref = re.search(r'\(property "Reference" ' + QUOTED, block)
+        lib = re.match(r"\(footprint " + QUOTED, block)
+        bare.append(
+            {"ref": ref.group(1) if ref else "?", "footprint": lib.group(1) if lib else "?", "models": models}
+        )
+    return bare
+
+
 def copper_layers(pcb: Path) -> list[str]:
     """The board's copper layers, top to bottom, as its layer table lists them."""
     text = pcb.read_text(encoding="utf-8", errors="replace")
@@ -497,9 +556,11 @@ def gate_render(
     spin_tilt: float = -55.0,
     spin_zoom: float = 1.0,
     spin_pivot: str | None = None,
+    strict: bool = False,
 ) -> Result:
     """Images of the design: schematic, board top and bottom (2D), board 3D top, bottom and isometric,
-    every layer on its own with an overview sheet, and on request a GIF that turns the 3D board round."""
+    every layer on its own with an overview sheet, and on request a GIF that turns the 3D board round.
+    The record names each part the 3D views draw bare (`parts_without_body`); `strict` fails on one."""
     rdir = out / "render"
     rdir.mkdir(parents=True, exist_ok=True)
     artifacts: list[str] = []
@@ -688,11 +749,15 @@ def gate_render(
             shutil.rmtree(frames, ignore_errors=True)
     if not artifacts:
         return Result("render", "skip", "nothing rendered", {"failures": failures, "skipped": skipped})
+    bare = parts_without_body(project) if project.pcb and {"3d", "spin"} & set(views) else []
+    summary = f"{len(artifacts)} images in {rdir}" + (f", {len(skipped)} skipped" if skipped else "")
+    if bare:
+        summary += f"; {len(bare)} parts drawn without a 3D body: {', '.join(b['ref'] for b in bare)}"
     return Result(
         "render",
-        "fail" if failures else "pass",
-        f"{len(artifacts)} images in {rdir}" + (f", {len(skipped)} skipped" if skipped else ""),
-        {"failures": failures, "skipped": skipped},
+        "fail" if failures or (strict and bare) else "pass",
+        summary,
+        {"failures": failures, "skipped": skipped, "no_body": bare},
         artifacts,
     )
 
@@ -968,6 +1033,7 @@ def main(argv: list[str] | None = None) -> int:
             spin_tilt=args.spin_tilt,
             spin_zoom=args.spin_zoom,
             spin_pivot=args.spin_pivot,
+            strict=args.strict,
         )
     if args.command == "gates":
         return cmd_gates(args)

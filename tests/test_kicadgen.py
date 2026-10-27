@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1012,3 +1013,152 @@ def test_design_command_refuses_a_router_via_below_the_minimum_hole(tmp_path):
     assert records["via_problems"] == ["default via: drill 0.25 is below the board's minimum hole 0.3"], (
         records
     )
+
+
+# ------------------------------------------------------- wired schematics
+
+
+@needs_libs
+@pytest.mark.parametrize(
+    "rot, pin1, pin2",
+    [
+        (0, (50.8, 46.99), (50.8, 54.61)),
+        (90, (46.99, 50.8), (54.61, 50.8)),
+        (180, (50.8, 54.61), (50.8, 46.99)),
+        (270, (54.61, 50.8), (46.99, 50.8)),
+    ],
+)
+def test_turned_symbol_pins_are_where_kicad_puts_them(rot, pin1, pin2):
+    """The pin positions KiCad's ERC reported for a Device:R at (50.8, 50.8) at each angle."""
+    d = kicadgen.Design(name="r", namespace=uuid.UUID(int=11))
+    part = d.add("R1", "Device:R", "1k", None, sch_at=(50.8, 50.8), nets={}, sch_rot=rot)
+    pins = {p.number: p for p in part.symbol.pins}
+    assert d._pin_point(part, pins["1"])[:2] == pytest.approx(pin1)
+    assert d._pin_point(part, pins["2"])[:2] == pytest.approx(pin2)
+
+
+@needs_libs
+def test_sch_rot_takes_quarter_turns_only():
+    d = kicadgen.Design(name="r", namespace=uuid.UUID(int=12))
+    with pytest.raises(ValueError, match="sch_rot"):
+        d.add("R1", "Device:R", "1k", None, sch_at=(50.8, 50.8), nets={}, sch_rot=45)
+
+
+def test_router_crosses_another_net_straight_through():
+    r = kicadgen.SchRouter(40, 40, 0)
+    r.add_path("A", [(x, 10) for x in range(2, 30)])
+    path = r.route("B", {(15, 2): None}, (20, 20), None)
+    assert path[0] == (15, 2) and path[-1] == (20, 20)
+    r.add_path("B", path)
+    (i,) = [k for k, c in enumerate(path) if c[1] == 10]
+    assert path[i - 1][0] == path[i][0] == path[i + 1][0]  # vertical through A's row, no bend there
+    assert r.node.get(path[i]) is None  # neither net has an end or a bend at the crossing
+
+
+def test_router_keeps_off_another_nets_end_and_out_of_its_line():
+    r = kicadgen.SchRouter(30, 30, 0)
+    r.add_path("A", [(5, y) for y in range(5, 21)])  # A ends at (5, 5) and (5, 20)
+    across = r.route("B", {(2, 5): None}, (8, 5), None)  # the straight line runs into A's end
+    assert across is not None and (5, 5) not in across
+    along = r.route("C", {(5, 0): None}, (5, 25), None)  # the straight line runs down A's wire
+    assert along is not None and not [c for c in along if c[0] == 5 and 5 <= c[1] <= 20]
+
+
+def netlist_groups(sch: Path, out: Path) -> set[tuple[tuple[str, str], ...]]:
+    """The pin groups of every net of two or more pins in KiCad's netlist of a schematic."""
+    net = out / "net.net"
+    subprocess.run(["kicad-cli", "sch", "export", "netlist", "-o", str(net), str(sch)], check=True)
+    root = kicadgen.parse(net.read_text(encoding="utf-8"))
+    groups = set()
+    for n in kicadgen.children(kicadgen.child(root, "nets"), "net"):
+        nodes = kicadgen.children(n, "node")
+        pins = sorted(
+            (kicadgen.atoms(kicadgen.child(x, "ref"))[0], kicadgen.atoms(kicadgen.child(x, "pin"))[0])
+            for x in nodes
+        )
+        if len(pins) > 1:
+            groups.add(tuple(pins))
+    return groups
+
+
+def wired_divider() -> kicadgen.Design:
+    """The divider with a turned resistor into a capacitor beside it, wired."""
+    d = divider()
+    d.sch_wires = True
+    d.add("R3", "Device:R", "1k", None, sch_at=(88.9, 52.07), nets={"1": "OUT", "2": "TAP"}, sch_rot=90)
+    d.add("C1", "Device:C", "1n", None, sch_at=(99.06, 58.42), nets={"1": "TAP", "2": "GND"})
+    return d
+
+
+@needs_libs
+@needs_kicad
+def test_wired_divider_passes_erc_with_the_netlist_it_declares(tmp_path):
+    d = wired_divider()
+    d.write(tmp_path)
+    code, records = run_cli("erc", tmp_path, "--out", tmp_path / "build", "--strict")
+    assert code == 0, records
+    sch = tmp_path / "gen_divider.kicad_sch"
+    assert netlist_groups(sch, tmp_path) == {
+        (("J1", "1"), ("R1", "1")),
+        (("J1", "2"), ("R1", "2"), ("R2", "1"), ("R3", "1")),
+        (("C1", "2"), ("J1", "3"), ("R2", "2")),
+        (("C1", "1"), ("R3", "2")),
+    }
+    text = sch.read_text(encoding="utf-8")
+    assert sorted(re.findall(r'\(label "([^"]+)"', text)) == ["OUT", "TAP"]  # each wired net named once
+    assert len(re.findall(r"\(junction\b", text)) >= 1  # OUT tees off to R3
+    assert "(at 88.9 52.07 90)" in text  # R3 stands turned
+
+
+@needs_libs
+@needs_kicad
+def test_wired_schematic_keeps_the_boards_net_names(tmp_path):
+    """A wired net is named by its label, not after a pin, so the board and the schematic agree."""
+    d = divider()
+    d.sch_wires = True
+    d.write(tmp_path)
+    code, records = run_cli("drc", tmp_path, "--out", tmp_path / "build")
+    parity = records[0]["details"]["counts"]["schematic_parity"]
+    assert parity["error"] == 0 and parity["warning"] == 0, records[0]["details"].get("first")
+
+
+@needs_libs
+def test_wired_schematic_labels_the_nets_it_is_told_to():
+    d = divider()
+    d.sch_wires = True
+    d.sch_label_nets = ("OUT",)
+    labels = re.findall(r'\(label "([^"]+)"', d.schematic())
+    assert labels == ["OUT", "OUT", "OUT"]  # one on each of J1 pin 2, R1 pin 2, R2 pin 1
+
+
+@needs_libs
+def test_wiring_refuses_a_pin_off_the_grid():
+    d = divider()
+    d.sch_wires = True
+    d.parts[1].sch_at = (71.0, 45.72)
+    with pytest.raises(ValueError, match="off the 1.27 mm grid"):
+        d.schematic()
+
+
+@needs_libs
+def test_unwired_schematic_is_still_stubs_and_labels():
+    text = divider().schematic()
+    assert re.findall(r'\(label "([^"]+)"', text) == ["OUT", "OUT", "OUT"] and not re.search(
+        r"\(junction\b", text
+    )
+
+
+def test_wrlgen_package_bodies_put_pin_one_top_left(tmp_path):
+    mould, metal, dot = wrlgen.leadless((4.0, 4.0, 0.55), (7, 7), 0.5, (0.4, 0.25))
+    assert len(metal.vertices) == 28 * 8  # a box per terminal
+    assert max(x for x, _, _ in dot.vertices) < 0 < min(y for _, y, _ in dot.vertices)  # by pin 1
+    assert max(z for _, _, z in mould.vertices) == pytest.approx(0.55)
+    mould, metal, dot = wrlgen.gullwing()  # Diodes' SOT523: body 0.8 x 1.6 x 0.75 on 0.05, tips 1.6 apart
+    assert len(metal.vertices) == 3 * 3 * 8  # three leads of three pieces
+    assert min(x for x, _, _ in metal.vertices) == pytest.approx(-0.8)
+    assert max(x for x, _, _ in metal.vertices) == pytest.approx(0.8)
+    assert max(z for _, _, z in mould.vertices) == pytest.approx(0.8)
+    assert max(x for x, _, _ in dot.vertices) < 0 < min(y for _, y, _ in dot.vertices)
+    for preset in ("leadless", "gullwing"):
+        assert wrlgen.main([preset, str(tmp_path / f"{preset}.wrl")]) == 0
+        assert (tmp_path / f"{preset}.wrl").read_text().startswith("#VRML V2.0 utf8")
