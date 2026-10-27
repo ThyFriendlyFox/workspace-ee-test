@@ -53,13 +53,15 @@ the skills tell the agent which gate comes next.
 - SIM gate from the schematic — export the SPICE netlist automatically and apply a stimulus template, so a project without a hand-written deck still gets a simulation.
 - `workcenter new <name>` — scaffold a board project with the `.gitignore`, `sim/`, and a passing starter board.
 - Publish the workcenter as an account-level Claude Code plugin — skills and the MCP server arrive in every cloud session without touching board repositories.
-- BOM availability gate — every BOM line resolves to a stocked part at a distributor before export passes.
+- BOM availability gate — `workcenter procure --strict` already fails on a line short of stock; a gate would run it before export. Needs a project-wide parts file first.
+- Digi-Key API refresh for `procure` — re-read every Digi-Key row's breaks and stock through Product Information v4 with the user's own credentials, instead of page by page.
 - STEP export in the EXPORT gate by default once the fixture proves it runs headless in CI within the time budget.
 
 ## Shipped
 
 | Week | Feature | Release | Evidence |
 |---|---|---|---|
+| 2026-10-27 | `workcenter procure` and the `procurement` skill: a schematic's BOM priced from a parts file, cheapest order per line, totals per supplier | unreleased | `tests/test_gates.py` (the fixture priced to the cent at 1 and 10 units; unmatched, unpriced and short-of-stock lines; the skip); the Last Hit parts lists; `DEVLOG.md` 2026-10-27 |
 | 2026-10-27 | Wired schematics in `kicadgen` (`sch_wires`, `sch_rot`); `render` names parts drawn without a 3D body; `wrlgen` `leadless` and `gullwing` bodies | unreleased | `tests/test_kicadgen.py` and `tests/test_gates.py` (wired divider ERC-clean with its declared netlist and no parity warning; pin positions at each angle as KiCad's ERC reports them; the bare-part report); Last Hit v0.10's two schematics; `DEVLOG.md` 2026-10-27 |
 | 2026-10-23 | `kicadgen` design-as-code generator; `workcenter design --route` headless autoroute for generated boards; `workcenter render`; `board-design` skill | unreleased | `tests/test_kicadgen.py` incl. the routed round trip; the first real board, GREEN in its own repository; `DEVLOG.md` 2026-10-23 |
 | 2026-10-22 | Install the kit; `install.sh`; gates ERC, DRC, SIM, EXPORT; fixture boards; skills | unreleased | `make verify` green at the install commit; `DEVLOG.md` 2026-10-22 |
@@ -74,5 +76,6 @@ the skills tell the agent which gate comes next.
 ## Queue changes
 
 - 2026-10-22 — queue seeded at setup, 4 items, provisional.
+- 2026-10-27 — `workcenter procure` shipped out of band: the user asked for every prototype's parts sourced from Digi-Key with the full cost, as a workcenter skill.
 - 2026-10-27 — the Later item "`kicadgen` schematic layout" shipped out of band: the user found the Last Hit schematics unreadable (M51).
 - 2026-10-23 — item 1 re-scoped: the generated-design half shipped out of band while building the first board; the remaining half is a `.kicad_pcb` reader in front of the same DSN writer.

@@ -28,6 +28,12 @@ or skill. **Done** is the observable result that ends the case.
 **Run.** `workcenter export <project>`.
 **Done.** `build/fab/` holds gerbers, drill files, `bom.csv`, and `schematic.pdf`. The folder is what the fab receives.
 
+## Price a board's parts
+
+**Open.** A board with a schematic, and a question: what does it cost, and where are its parts?
+**Run.** The `procurement` skill: fill `parts.csv` from the suppliers' pages (P25), then `workcenter procure <project> --parts parts.csv --boards 1,10`.
+**Done.** `build/procure/parts.md` lists an orderable part for every line with its supplier number, price and stock, the totals per supplier for each unit count, and nothing under "Not in the parts files".
+
 ## Simulate before layout
 
 **Open.** A schematic with a measurable spec and a `sim/<deck>.cir` with `sim/<deck>.expect.json`.
