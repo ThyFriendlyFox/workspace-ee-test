@@ -49,7 +49,6 @@ the skills tell the agent which gate comes next.
 ## Later — candidates, not yet specced
 
 - Copper pours in `kicadgen` — a zone per power net with `kicad-cli pcb drc --refill-zones`, so heater returns stop depending on 0.4 mm tracks.
-- `kicadgen` schematic layout — wires between blocks instead of stub labels, for schematics humans read on paper.
 - Pad-entry width check before routing — warn in `workcenter design` when a net class is wider than its narrowest pad allows.
 - SIM gate from the schematic — export the SPICE netlist automatically and apply a stimulus template, so a project without a hand-written deck still gets a simulation.
 - `workcenter new <name>` — scaffold a board project with the `.gitignore`, `sim/`, and a passing starter board.
@@ -61,6 +60,7 @@ the skills tell the agent which gate comes next.
 
 | Week | Feature | Release | Evidence |
 |---|---|---|---|
+| 2026-10-27 | Wired schematics in `kicadgen` (`sch_wires`, `sch_rot`); `render` names parts drawn without a 3D body; `wrlgen` `leadless` and `gullwing` bodies | unreleased | `tests/test_kicadgen.py` and `tests/test_gates.py` (wired divider ERC-clean with its declared netlist and no parity warning; pin positions at each angle as KiCad's ERC reports them; the bare-part report); Last Hit v0.10's two schematics; `DEVLOG.md` 2026-10-27 |
 | 2026-10-23 | `kicadgen` design-as-code generator; `workcenter design --route` headless autoroute for generated boards; `workcenter render`; `board-design` skill | unreleased | `tests/test_kicadgen.py` incl. the routed round trip; the first real board, GREEN in its own repository; `DEVLOG.md` 2026-10-23 |
 | 2026-10-22 | Install the kit; `install.sh`; gates ERC, DRC, SIM, EXPORT; fixture boards; skills | unreleased | `make verify` green at the install commit; `DEVLOG.md` 2026-10-22 |
 
@@ -74,4 +74,5 @@ the skills tell the agent which gate comes next.
 ## Queue changes
 
 - 2026-10-22 — queue seeded at setup, 4 items, provisional.
+- 2026-10-27 — the Later item "`kicadgen` schematic layout" shipped out of band: the user found the Last Hit schematics unreadable (M51).
 - 2026-10-23 — item 1 re-scoped: the generated-design half shipped out of band while building the first board; the remaining half is a `.kicad_pcb` reader in front of the same DSN writer.

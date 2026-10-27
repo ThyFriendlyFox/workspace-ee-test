@@ -46,8 +46,8 @@ gates then read like any other project.
 
 | File | Task |
 |---|---|
-| `tools/workcenter` | `find_project`, 1 `gate_*` function per gate, `gate_render`, `cmd_gates` for the ordered run, `cmd_design` for design files, `cmd_doctor` for engine status, `emit` for output and exit codes. |
-| `tools/kicadgen.py` | `parse`/`dumps` for S-expressions, `load_symbol`/`load_footprint`, `Design` with `schematic()`, `board()`, `project()`, `dsn()`, `merge_ses()`, `write()`; `load_design()` and `route()` for the CLI. |
+| `tools/workcenter` | `find_project`, 1 `gate_*` function per gate, `gate_render` (with `parts_without_body`), `cmd_gates` for the ordered run, `cmd_design` for design files, `cmd_doctor` for engine status, `emit` for output and exit codes. |
+| `tools/kicadgen.py` | `parse`/`dumps` for S-expressions, `load_symbol`/`load_footprint`, `Design` with `schematic()` (stub-and-label, or wired by `SchRouter` when `sch_wires` is set), `board()`, `project()`, `dsn()`, `merge_ses()`, `write()`; `load_design()` and `route()` for the CLI. |
 
 ## Boundaries
 

@@ -11,8 +11,11 @@ Y toward the top of the footprint, Z up out of the board. Attach one with `Desig
     python3 tools/wrlgen.py cartridge-510 models/cartridge_510.wrl --length 52
     python3 tools/wrlgen.py pouch-cell models/cell.wrl --size 25 8 35
     python3 tools/wrlgen.py display-module models/oled.wrl
+    python3 tools/wrlgen.py leadless models/qfn28.wrl --body 4 4 0.55 --pins 7 7 --pitch 0.5
+    python3 tools/wrlgen.py gullwing models/sot523.wrl --body 0.8 1.6 0.75 --leads 2 1 --span 1.6
 
-The last two are mechanical context for assembly renders (a cell, a display on a side wall);
+`leadless` and `gullwing` are small packages whose library body is missing; pouch-cell and
+display-module are mechanical context for assembly renders (a cell, a display on a side wall);
 `cartridge-510` stands on a `connector-510`, its thread reaching down into the collar.
 """
 
@@ -356,6 +359,68 @@ def display_module(
     return [board, panel, lit]
 
 
+def leadless(
+    body: tuple[float, float, float] = (4.0, 4.0, 0.55),
+    pins: tuple[int, int] = (7, 7),
+    pitch: float = 0.5,
+    terminal: tuple[float, float] = (0.4, 0.25),
+) -> list[Mesh]:
+    """A leadless package (QFN, DFN, SON): a moulded body with its terminals at the foot of each side
+    and a pin 1 dot. `pins` is (along the top and bottom edges, along the left and right edges), per
+    side, centred, `pitch` apart; a terminal reaches terminal[0] in from the edge and is terminal[1]
+    wide. Pin 1 is the upper end of the left side, as KiCad's QFN and DFN footprints number them."""
+    w, d, h = body
+    reach, wide = terminal
+    tall = min(0.2, h * 0.4)
+    mould = Mesh(BLACK)
+    box(mould, 0.0, 0.0, 0.0, w, d, h)
+    metal = Mesh(SILVER)
+    nx, ny = pins
+    for side in (-1, 1):  # a terminal stands 0.01 mm proud of the side so the render shows it
+        for k in range(ny):
+            y = ((ny - 1) / 2 - k) * pitch
+            box(metal, side * (w / 2 - reach / 2 + 0.01), y, 0.0, reach + 0.02, wide, tall)
+        for k in range(nx):
+            x = (k - (nx - 1) / 2) * pitch
+            box(metal, x, side * (d / 2 - reach / 2 + 0.01), 0.0, wide, reach + 0.02, tall)
+    dot = Mesh(GREY)
+    r = 0.08 * min(w, d)
+    cylinder(dot, -w / 2 + 2.5 * r, d / 2 - 2.5 * r, h, r, 0.01, 24)
+    return [mould, metal, dot]
+
+
+def gullwing(
+    body: tuple[float, float, float] = (0.8, 1.6, 0.75),
+    leads: tuple[int, int] = (2, 1),
+    pitch: float = 1.0,
+    span: float = 1.6,
+    lead: tuple[float, float] = (0.22, 0.12),
+    standoff: float = 0.05,
+) -> list[Mesh]:
+    """A small gull-wing package (SOT-23, SOT-523, SC-70): a moulded body on a standoff, `leads`
+    (left, right) leaving its long sides `pitch` apart and centred, bent down to feet whose tips are
+    `span` apart; lead[0] is a lead's width, lead[1] its thickness. Pin 1 is the upper lead on the
+    left, as KiCad's SOT footprints number them; the defaults are Diodes' SOT523 drawing."""
+    bw, bd, bh = body
+    wide, thick = lead
+    mould = Mesh(BLACK)
+    box(mould, 0.0, 0.0, standoff, bw, bd, bh)
+    metal = Mesh(SILVER)
+    reach = (span - bw) / 2  # body side to lead tip
+    arm_z = standoff + 0.4 * bh
+    for side, n in ((-1, leads[0]), (1, leads[1])):
+        for k in range(n):
+            y = ((n - 1) / 2 - k) * pitch
+            edge = side * bw / 2
+            box(metal, edge + side * reach * 0.2, y, arm_z - thick / 2, reach * 0.4, wide, thick)  # out
+            box(metal, edge + side * reach * 0.4, y, 0.0, thick, wide, arm_z + thick / 2)  # down
+            box(metal, edge + side * reach * 0.7, y, 0.0, reach * 0.6, wide, thick)  # foot
+    dot = Mesh(GREY)
+    r = 0.1 * min(bw, bd)
+    cylinder(dot, -bw / 2 + 2.0 * r, bd / 2 - 2.0 * r, standoff + bh, r, 0.01, 24)
+    return [mould, metal, dot]
+
+
 # -------------------------------------------------------------------- output
 
 
@@ -457,8 +522,55 @@ def main(argv: list[str] | None = None) -> int:
     o.add_argument(
         "--pcb", type=float, nargs=3, default=(38.0, 12.0, 1.2), metavar=("W", "D", "T"), help="mm"
     )
+    n = sub.add_parser("leadless", help="QFN, DFN or SON body: moulding, terminals, pin 1 dot")
+    n.add_argument("out", type=Path, help="the .wrl file to write")
+    n.add_argument(
+        "--body", type=float, nargs=3, default=(4.0, 4.0, 0.55), metavar=("W", "D", "H"), help="mm"
+    )
+    n.add_argument(
+        "--pins",
+        type=int,
+        nargs=2,
+        default=(7, 7),
+        metavar=("NX", "NY"),
+        help="terminals per side: along the top and bottom edges, along the left and right edges",
+    )
+    n.add_argument("--pitch", type=float, default=0.5, help="terminal pitch, mm (default 0.5)")
+    n.add_argument(
+        "--terminal",
+        type=float,
+        nargs=2,
+        default=(0.4, 0.25),
+        metavar=("L", "W"),
+        help="terminal length in from the edge and width, mm",
+    )
+    w = sub.add_parser("gullwing", help="SOT-23, SOT-523 or SC-70 body: moulding on a standoff, bent leads")
+    w.add_argument("out", type=Path, help="the .wrl file to write")
+    w.add_argument(
+        "--body", type=float, nargs=3, default=(0.8, 1.6, 0.75), metavar=("W", "D", "H"), help="mm"
+    )
+    w.add_argument(
+        "--leads", type=int, nargs=2, default=(2, 1), metavar=("LEFT", "RIGHT"), help="leads per side"
+    )
+    w.add_argument("--pitch", type=float, default=1.0, help="lead pitch along a side, mm (default 1.0)")
+    w.add_argument("--span", type=float, default=1.6, help="lead tip to lead tip, mm (default 1.6)")
+    w.add_argument(
+        "--lead", type=float, nargs=2, default=(0.22, 0.12), metavar=("W", "T"), help="lead width, thickness"
+    )
+    w.add_argument("--standoff", type=float, default=0.05, help="body above the board, mm (default 0.05)")
     a = ap.parse_args(argv)
-    if a.preset == "usb-c-vertical":
+    if a.preset == "leadless":
+        meshes = leadless(tuple(a.body), tuple(a.pins), a.pitch, tuple(a.terminal))
+        comment = (
+            f"leadless body={list(a.body)} pins={list(a.pins)} pitch={a.pitch} terminal={list(a.terminal)}"
+        )
+    elif a.preset == "gullwing":
+        meshes = gullwing(tuple(a.body), tuple(a.leads), a.pitch, a.span, tuple(a.lead), a.standoff)
+        comment = (
+            f"gullwing body={list(a.body)} leads={list(a.leads)} pitch={a.pitch} span={a.span} "
+            f"lead={list(a.lead)} standoff={a.standoff}"
+        )
+    elif a.preset == "usb-c-vertical":
         meshes = usb_c_vertical(a.height, tuple(a.base), tuple(a.shell))
         comment = f"usb-c-vertical height={a.height} base={a.base} shell={a.shell}"
     elif a.preset == "threaded-stud":

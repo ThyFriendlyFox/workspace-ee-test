@@ -238,6 +238,68 @@ def test_render_spin_without_ffmpeg_skips_with_the_reason(tmp_path, monkeypatch)
     assert result.details["skipped"] == ["board-spin.gif: ffmpeg missing"]
 
 
+def test_footprint_blocks_skip_brackets_inside_quotes():
+    cli = load_cli_module()
+    text = '(kicad_pcb (version 1) (footprint "A:B" (property "Value" "a)b(") (at 1 2)) (footprint "C:D"))'
+    blocks = cli.footprint_blocks(text)
+    assert blocks == ['(footprint "A:B" (property "Value" "a)b(") (at 1 2))', '(footprint "C:D")']
+
+
+def with_models(tmp_path: Path, monkeypatch) -> Path:
+    """A copy of the passing fixture whose footprints name 3D models: R1 a library body that exists,
+    R2 one that does not, C1 a missing library body and a project body that exists, J1 none."""
+    project = tmp_path / "board"
+    shutil.copytree(BOARDS / "pass-rc-divider", project)
+    lib = tmp_path / "3dmodels"
+    (lib / "Resistor_SMD.3dshapes").mkdir(parents=True)
+    (lib / "Resistor_SMD.3dshapes" / "R_0603_1608Metric.step").write_text("x", encoding="utf-8")
+    (project / "models").mkdir()
+    (project / "models" / "c.wrl").write_text("#VRML V2.0 utf8\n", encoding="utf-8")
+    for var in ("KICAD10_3DMODEL_DIR", "KICAD9_3DMODEL_DIR", "KICAD8_3DMODEL_DIR"):
+        monkeypatch.setenv(var, str(lib))
+    models = {
+        "R1": ["${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.step"],
+        "R2": ["${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_gone.step"],
+        "C1": [
+            "${KICAD10_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603_1608Metric.step",
+            "${KIPRJMOD}/models/c.wrl",
+        ],
+    }
+    pcb = project / "rc_divider.kicad_pcb"
+    text = pcb.read_text(encoding="utf-8")
+    cli = load_cli_module()
+    for block in cli.footprint_blocks(text):
+        ref = re.search(r'\(property "Reference" "([^"]+)"', block).group(1)
+        if ref in models:
+            lines = "".join(f'\n\t\t(model "{m}")' for m in models[ref])
+            text = text.replace(block, block[:-1] + lines + "\n\t)")
+    pcb.write_text(text, encoding="utf-8")
+    return project
+
+
+def test_parts_without_body_names_only_the_parts_drawn_bare(tmp_path, monkeypatch):
+    cli = load_cli_module()
+    project = cli.find_project(str(with_models(tmp_path, monkeypatch)))
+    bare = cli.parts_without_body(project)
+    assert [(b["ref"], b["footprint"]) for b in bare] == [("R2", "Resistor_SMD:R_0603_1608Metric")]
+    assert bare[0]["models"] == ["${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_gone.step"]
+
+
+@needs_kicad
+def test_render_names_a_bare_part_and_strict_fails_on_it(tmp_path, monkeypatch):
+    project = with_models(tmp_path, monkeypatch)
+    code, records = run("render", project, "--out", tmp_path / "out", "--views", "3d", "--width", "320")
+    assert code == 0, records
+    assert records[0]["summary"].endswith("1 parts drawn without a 3D body: R2")
+    assert [b["ref"] for b in records[0]["details"]["no_body"]] == ["R2"]
+    code, records = run(
+        "render", project, "--out", tmp_path / "out", "--views", "3d", "--width", "320", "--strict"
+    )
+    assert code == 1 and records[0]["status"] == "fail"
+    code, records = run("render", project, "--out", tmp_path / "out", "--views", "2d")
+    assert code == 0 and records[0]["details"]["no_body"] == []  # 2D views draw no bodies
+
+
 def test_fixtures_match_generator():
     proc = subprocess.run(
         [sys.executable, str(BOARDS / "generate.py"), "--check"], capture_output=True, text=True, check=False

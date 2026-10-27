@@ -476,7 +476,9 @@ When: a board version's gates are GREEN and P14's close-out is next; again
 after any change to what the boards look like in that version.
 
 1. `workcenter render <board>` for every board of the version: the stills
-   and every layer (`build/render/layers/`, `build/render/layers.png`).
+   and every layer (`build/render/layers/`, `build/render/layers.png`). Its
+   summary names each part the 3D views draw without a body (`--strict`
+   fails on one): give each its body before any picture is kept (M52).
 2. A turning GIF of every board, `workcenter render <board> --views spin`,
    seen from the face that carries the parts; a board with parts on both
    faces gets one from above and one from below (`--spin-tilt -125`, with
@@ -495,5 +497,27 @@ after any change to what the boards look like in that version.
 
 Done when: the version's `docs/` holds a layer sheet and a turning GIF for
 every board and for the assembly, all four test frames of each GIF whole,
-the README shows them and names their commands, and the report carried
-them.
+no render names a part without a body, the README shows them and names
+their commands, and the report carried them.
+
+## P24 — A schematic someone reads
+
+When: writing or changing a board's schematic, and before a board version's
+close-out.
+
+1. The design sets `sch_wires = True` and keeps its layout in one table of
+   positions and angles (`SCHEMATIC`), in blocks the way the signal flows:
+   power left to right along the top, each support part beside the pin it
+   serves, connectors facing the circuit they feed.
+2. Labels only for nets that cross the whole sheet (`sch_label_nets`), each
+   named in a comment; every other net is a wire.
+3. Check the drawing against the design: ERC 0 errors and 0 warnings, and
+   the DRC shows no parity warning, so every wired net carries the board's
+   name.
+4. Plot the sheet (`workcenter render . --views schematic`) and read it:
+   follow each signal in the README's pin table from its MCU pin to its part.
+   Move a part when a wire wanders round the sheet or text lands on a part,
+   and plot again.
+
+Done when: ERC is 0/0, the DRC shows no parity warning, and the plot in the
+README is the one that was read.

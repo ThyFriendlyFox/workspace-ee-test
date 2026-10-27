@@ -313,3 +313,21 @@ What happened: PR #23 gave `workcenter render` `--views`, `--spin-frames`, `--sp
 Cost: a configuration doc wrong for every flag added since the split; found while writing P23, after #23 merged.
 Root cause: P10 was not read before the command line changed, and nothing compared the table with the code.
 Process: P10
+
+## M51 — 2026-10-27 — Nine versions of schematics nobody could read
+What happened: every Last Hit schematic, v0.1 to v0.9, came out of the generator as symbols with a stub and a net label on each pin and no wire between parts. ERC and parity passed, so the gates were GREEN, and each README showed the sheet. The user put it beside a Commodore 64 service schematic: the pieces are listed, nothing is joined.
+Cost: no version's schematic could be followed from a pin to the part it drives; the generator gained a schematic router and v0.10 redrew both boards.
+Root cause: the schematic writer was built to the gates, which labels satisfy, and no step looked at the schematic as a drawing.
+Process: P24
+
+## M52 — 2026-10-27 — Bare pads where four parts should be
+What happened: from v0.6 on, the MCU (QFN-28 4 x 4 mm), the charger (DFN-8 3 x 2 mm) and the SOT-523 gate drivers rendered as bare pads on the base board's underside. KiCad's footprints name 3D bodies its 3D library does not ship, and `workcenter render` drew without them and said nothing. The user saw it in the v0.9 pictures.
+Cost: four versions of 3D pictures and turning GIFs with parts missing.
+Root cause: nothing compared the bodies the footprints name with the files on disk, and the pictures were checked for framing, not for what was missing.
+Process: P23
+
+## M53 — 2026-10-27 — `cd` again, in a session with two repositories
+What happened: two commands started with `cd` while the generator was being tested. The no-cd hook does not load in a session with two repositories, and P8 was not read again. Nothing ran in the wrong place.
+Cost: none this time.
+Root cause: habit, with the hook that refuses it absent in this kind of session; installing it user-wide is the user's decision.
+Process: P8

@@ -50,8 +50,11 @@ layer with the outline, bottom layers seen from below) with an overview sheet,
 the 3D board turning once round (`--spin-frames`, `--spin-tilt`, `--spin-zoom`,
 `--spin-pivot`;
 a minute or two of frames). `--views` takes any of schematic, 2d, 3d, layers,
-spin, or all. A finished board version shows its layer sheets and a turning
-GIF of every board and its assembly in its README (`PROCESSES.md` P23).
+spin, or all. Its summary names every part the 3D views draw without a body
+(a footprint naming a model that is not on disk); `--strict` fails on one.
+A finished board version shows its layer sheets and a turning
+GIF of every board and its assembly in its README (`PROCESSES.md` P23), and
+a wired schematic someone has read (`sch_wires`, P24).
 
 A project may add gates. It may not remove these.
 

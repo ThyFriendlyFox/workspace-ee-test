@@ -401,6 +401,230 @@ def load_footprint(lib_id: str, dirs: dict[str, Path] | None = None) -> Footprin
     return Footprint(lib, name, node, pads, court)
 
 
+# ------------------------------------------------------------ schematic wiring
+
+SCH_GRID = 1.27  # KiCad's connection grid: every pin end of a library symbol sits on it
+TEXT_ADVANCE = 1.34  # mm a character of 1.27 mm text takes in KiCad's font, read off a plotted "R1"
+SHEETS = {"A4": (297.0, 210.0), "A3": (420.0, 297.0), "A2": (594.0, 420.0), "A1": (841.0, 594.0)}
+STEPS = ((1, 0), (0, 1), (-1, 0), (0, -1))  # east, south, west, north on the sheet (y down)
+Cell = tuple[int, int]
+
+
+def rot_vec(x: float, y: float, rot: int) -> tuple[float, float]:
+    """A sheet vector (y down) turned counter-clockwise on screen by `rot` degrees, the way KiCad turns
+    a symbol placed at that angle. Read from KiCad's ERC report: at 90 a resistor's pin 1 moves from
+    the top to the left, at 270 to the right."""
+    r = rot % 360
+    if r == 0:
+        return x, y
+    if r == 90:
+        return y, -x
+    if r == 180:
+        return -x, -y
+    return -y, x
+
+
+def symbol_box(sym: Symbol) -> tuple[float, float, float, float]:
+    """The symbol's drawn body in library coordinates (y up): the rectangles, lines, circles, arcs and
+    curves of every unit, without pins or text. A symbol that draws none is its pins' inner ends."""
+    xs: list[float] = []
+    ys: list[float] = []
+    for unit in children(sym.node, "symbol"):
+        for g in unit[2:]:
+            if not isinstance(g, list) or not g:
+                continue
+            if g[0] == "circle":
+                c, r = child(g, "center"), child(g, "radius")
+                cx, cy, rr = num(atoms(c)[0]), num(atoms(c)[1]), num(atoms(r)[0])
+                xs += [cx - rr, cx + rr]
+                ys += [cy - rr, cy + rr]
+            elif g[0] in ("rectangle", "polyline", "arc", "bezier"):
+                for head in ("start", "mid", "end"):
+                    p = child(g, head)
+                    if p is not None:
+                        xs.append(num(atoms(p)[0]))
+                        ys.append(num(atoms(p)[1]))
+                pts = child(g, "pts")
+                for xy in children(pts, "xy") if pts is not None else []:
+                    xs.append(num(atoms(xy)[0]))
+                    ys.append(num(atoms(xy)[1]))
+    if not xs:
+        for p in sym.pins:
+            a = math.radians(p.angle)
+            xs.append(p.x + p.length * math.cos(a))
+            ys.append(p.y + p.length * math.sin(a))
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+class SchRouter:
+    """Orthogonal schematic wires on the 1.27 mm grid, one net at a time.
+
+    KiCad joins a wire to anything one of its ends touches, and to a wire it overlaps along its length;
+    two wires that cross at right angles stay apart. So an edge between two cells carries one net, the
+    ends and bends of a wire ("nodes") belong to one net, and a wire crosses another only straight
+    through a cell where neither has a node.
+    """
+
+    BEND = 2.0  # a bend costs as much as two cells of wire
+    CROSS = 3.0
+    TEXT = 12.0  # over a part's name or value, or a label
+    NEAR = 0.4  # beside a part's body
+    BESIDE = 0.8  # one cell from another net's wire running the same way
+    LIMIT = 400_000  # states expanded before a connection is given up
+
+    def __init__(self, cols: int, rows: int, margin: int):
+        self.lo = (margin, margin)
+        self.hi = (cols - margin, rows - margin)
+        self.blocked: set[Cell] = set()
+        self.ends: set[Cell] = set()  # pin ends: a wire enters one only as the connection it routes
+        self.soft: dict[Cell, float] = {}
+        self.node: dict[Cell, str] = {}
+        self.edge: dict[tuple[Cell, int], str] = {}  # (cell, 0): the edge east of it; (cell, 1): south
+
+    @staticmethod
+    def edge_key(a: Cell, b: Cell) -> tuple[Cell, int]:
+        if a[1] == b[1]:
+            return (min(a, b), 0)
+        return ((a[0], min(a[1], b[1])), 1)
+
+    def along(self, c: Cell, axis: int) -> set[str]:
+        """Nets with a wire into cell c along an axis, 0 horizontal and 1 vertical."""
+        if axis == 0:
+            keys = (((c[0] - 1, c[1]), 0), (c, 0))
+        else:
+            keys = (((c[0], c[1] - 1), 1), (c, 1))
+        return {self.edge[k] for k in keys if k in self.edge}
+
+    def inside(self, c: Cell) -> bool:
+        return self.lo[0] <= c[0] <= self.hi[0] and self.lo[1] <= c[1] <= self.hi[1]
+
+    def free(self, c: Cell, net: str) -> bool:
+        """Whether a wire of `net` may end or bend at c."""
+        if c in self.blocked or not self.inside(c):
+            return False
+        if self.node.get(c, net) != net:
+            return False
+        return all(n == net for axis in (0, 1) for n in self.along(c, axis))
+
+    def add_path(self, net: str, cells: list[Cell]) -> None:
+        for a, b in zip(cells, cells[1:], strict=False):
+            self.edge[self.edge_key(a, b)] = net
+        for i, c in enumerate(cells):
+            inner = 0 < i < len(cells) - 1
+            if not inner or (cells[i - 1][0] != cells[i + 1][0] and cells[i - 1][1] != cells[i + 1][1]):
+                self.node[c] = net
+
+    def route(
+        self, net: str, sources: dict[Cell, Cell | None], target: Cell, approach: Cell | None
+    ) -> list[Cell] | None:
+        """The cheapest path from any source to target, or None. `sources` maps a cell to the one cell
+        a path may leave it by (a pin's exit), or None for any; the path enters target from `approach`
+        when one is given."""
+        import heapq
+
+        tx, ty = target
+        heap: list[tuple[float, int, float, Cell, int]] = []
+        best: dict[tuple[Cell, int], float] = {}
+        prev: dict[tuple[Cell, int], tuple[Cell, int] | None] = {}
+        count = 0
+        for s in sorted(sources):
+            best[(s, 4)] = 0.0
+            prev[(s, 4)] = None
+            heapq.heappush(heap, (abs(s[0] - tx) + abs(s[1] - ty), count, 0.0, s, 4))
+            count += 1
+        expanded = 0
+        while heap:
+            _, _, g, c, d = heapq.heappop(heap)
+            if c == target:
+                path, state = [], (c, d)
+                while state is not None:
+                    path.append(state[0])
+                    state = prev[state]
+                return path[::-1]
+            if g > best.get((c, d), math.inf):
+                continue
+            expanded += 1
+            if expanded > self.LIMIT:
+                return None
+            # straight through another net's wire: no bend here
+            crossing = d != 4 and any(n != net for axis in (0, 1) for n in self.along(c, axis))
+            for nd, (sx, sy) in enumerate(STEPS):
+                if d != 4 and nd == (d + 2) % 4:
+                    continue
+                if crossing and nd != d:
+                    continue
+                nb = (c[0] + sx, c[1] + sy)
+                if d == 4 and sources.get(c) is not None and nb != sources[c]:
+                    continue
+                if not self.inside(nb):
+                    continue
+                if nb == target:
+                    if approach is not None and c != approach:
+                        continue
+                elif nb in self.blocked or nb in self.ends:
+                    continue
+                if self.edge.get(self.edge_key(c, nb), net) != net:
+                    continue
+                if self.node.get(nb, net) != net:
+                    continue
+                axis = nd % 2
+                if any(n != net for n in self.along(nb, axis)):
+                    continue
+                cross = any(n != net for n in self.along(nb, 1 - axis))
+                if cross and nb == target:
+                    continue
+                step = 1.0 + self.soft.get(nb, 0.0)
+                if d not in (4, nd):
+                    step += self.BEND
+                if cross:
+                    step += self.CROSS
+                for side in (-1, 1):  # another net's wire running alongside, one cell over
+                    o = (nb[0] + side * (1 - axis), nb[1] + side * axis)
+                    if any(n != net for n in self.along(o, axis)):
+                        step += self.BESIDE
+                ng = g + step
+                if ng < best.get((nb, nd), math.inf):
+                    best[(nb, nd)] = ng
+                    prev[(nb, nd)] = (c, d)
+                    heapq.heappush(heap, (ng + abs(nb[0] - tx) + abs(nb[1] - ty), count, ng, nb, nd))
+                    count += 1
+        return None
+
+    def segments(
+        self, net: str, keep: set[Cell], pins: set[Cell]
+    ) -> tuple[list[tuple[Cell, Cell]], list[Cell]]:
+        """The net's wires as straight segments that end at every bend, tee and cell in `keep` (pin ends,
+        labels, power symbols), and the cells where three or more connections meet, a pin end counting
+        as one."""
+        adj: dict[Cell, set[Cell]] = {}
+        for (c, axis), n in self.edge.items():
+            if n != net:
+                continue
+            o = (c[0] + 1, c[1]) if axis == 0 else (c[0], c[1] + 1)
+            adj.setdefault(c, set()).add(o)
+            adj.setdefault(o, set()).add(c)
+
+        def breaks(c: Cell) -> bool:
+            nb = adj[c]
+            if c in keep or len(nb) != 2:
+                return True
+            a, b = sorted(nb)
+            return a[0] != b[0] and a[1] != b[1]
+
+        segs: set[tuple[Cell, Cell]] = set()
+        for c in adj:
+            if not breaks(c):
+                continue
+            for o in adj[c]:
+                dx, dy = o[0] - c[0], o[1] - c[1]
+                e = o
+                while not breaks(e):
+                    e = (e[0] + dx, e[1] + dy)
+                segs.add((min(c, e), max(c, e)))
+        dots = sorted(c for c, nb in adj.items() if len(nb) + (1 if c in pins else 0) >= 3)
+        return sorted(segs), dots
+
+
 # ---------------------------------------------------------------- design
 
 POWER_LIB = "power"
@@ -444,6 +668,9 @@ class Part:
         None  # how zones meet this part's pads: None inherit, 0 none, 1 thermal, 2 solid
     )
     models: list[dict] = field(default_factory=list)  # extra 3D bodies, see Design.model()
+    sch_rot: int = (
+        0  # the symbol's angle on the sheet, 0, 90, 180 or 270, counter-clockwise as KiCad shows it
+    )
 
     @property
     def on_board(self) -> bool:
@@ -488,6 +715,12 @@ class Design:
         default_factory=dict
     )  # net name -> power symbol name (e.g. GND -> GND)
     flagged_nets: list[str] = field(default_factory=list)  # nets that get a PWR_FLAG
+    # The schematic: False writes a stub and a net label on every pin; True draws wires between the
+    # pins of each net round the parts (SchRouter) and keeps labels for the nets in sch_label_nets,
+    # one-pin nets, and a pin no wire can reach. Wiring needs every pin on the 1.27 mm grid.
+    sch_wires: bool = False
+    sch_label_nets: tuple[str, ...] = ()
+    sheet: str = "A3"  # paper: A4, A3, A2 or A1
     outline: tuple[float, float, float, float] = (100.0, 100.0, 125.0, 120.0)
     track_width: float = 0.25
     clearance: float = 0.2
@@ -556,7 +789,10 @@ class Design:
         stub: float = 2.54,
         pcb_layer: str = "F.Cu",
         zone_connect: int | None = None,
+        sch_rot: int = 0,
     ) -> Part:
+        if sch_rot not in (0, 90, 180, 270):
+            raise ValueError(f"{ref}: sch_rot must be 0, 90, 180 or 270, not {sch_rot!r}")
         sym = self.symbol(lib_id)
         fpo = self.fp(footprint) if footprint else None
         for pin_no in nets:
@@ -574,6 +810,7 @@ class Design:
             ref, sym, value, fpo, sch_at, pcb_at, pcb_rot, pcb_layer, dict(nets), descr, datasheet, stub
         )
         part.zone_connect = zone_connect
+        part.sch_rot = sch_rot
         self.parts.append(part)
         return part
 
@@ -1137,11 +1374,64 @@ class Design:
 
     def _pin_point(self, part: Part, pin: Pin) -> tuple[float, float, float, float]:
         """Connection point in schematic coordinates plus the outward unit vector."""
-        x = part.sch_at[0] + pin.x
-        y = part.sch_at[1] - pin.y
+        vx, vy = rot_vec(pin.x, -pin.y, part.sch_rot)
+        x = part.sch_at[0] + vx
+        y = part.sch_at[1] + vy
         a = math.radians(pin.angle)
-        dx, dy = -math.cos(a), math.sin(a)  # outward, schematic y down
+        dx, dy = rot_vec(-math.cos(a), math.sin(a), part.sch_rot)  # outward, schematic y down
         return x, y, round(dx), round(dy)
+
+    @staticmethod
+    def _sheet_box(sym: Symbol, at: tuple[float, float], rot: int) -> tuple[float, float, float, float]:
+        """A symbol's body on the sheet (y down) at a position and angle."""
+        x0, y0, x1, y1 = symbol_box(sym)
+        pts = [rot_vec(x, -y, rot) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+        xs = [at[0] + p[0] for p in pts]
+        ys = [at[1] + p[1] for p in pts]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def _field_spots(
+        self,
+        sym: Symbol,
+        at: tuple[float, float],
+        rot: int,
+        texts: list[str],
+        sides: set[tuple[int, int]],
+        fields: tuple[str, ...] = ("Reference", "Value"),
+    ) -> list[tuple[float, float]]:
+        """Where each of `fields` (showing `texts`) starts, its left end at mid-height, so it reads level
+        beside the body: the library's own spot for a symbol at 0 whose field is level, otherwise a side
+        no pin leaves from, right, left, above, below in that order. `sides` holds the pins' outward
+        directions."""
+        x0, y0, x1, y1 = self._sheet_box(sym, at, rot)
+        widths = [len(t) * TEXT_ADVANCE for t in texts]
+        lib = {atoms(p)[0]: p for p in children(sym.node, "property")}
+        spots: list[tuple[float, float]] = []
+        names = fields
+        if rot == 0 and all(n in lib and len(atoms(child(lib[n], "at"))) > 2 for n in names):
+            for name, w in zip(names, widths, strict=True):
+                fx, fy, fa = (num(v) for v in atoms(child(lib[name], "at"))[:3])
+                if fa != 0:
+                    break
+                eff = child(lib[name], "effects")
+                just = atoms(child(eff, "justify")) if eff is not None and child(eff, "justify") else []
+                sx = at[0] + fx - (0 if "left" in just else w if "right" in just else w / 2)
+                spots.append((round(sx, 3), round(at[1] - fy, 3)))
+            if len(spots) == len(texts):
+                return spots
+            spots = []
+        cy, cx = (y0 + y1) / 2, (x0 + x1) / 2
+        rows = [cy - 1.27 * (len(texts) - 1) + 2.54 * i for i in range(len(texts))]
+        if (1, 0) not in sides:
+            return [(round(x1 + 0.635, 3), round(r, 3)) for r in rows]
+        if (-1, 0) not in sides:
+            return [(round(x0 - 0.635 - w, 3), round(r, 3)) for r, w in zip(rows, widths, strict=True)]
+        if (0, -1) not in sides:
+            top = y0 - 1.27 - 2.54 * (len(texts) - 1)
+            return [(round(cx - w / 2, 3), round(top + 2.54 * i, 3)) for i, w in enumerate(widths)]
+        if (0, 1) not in sides:
+            return [(round(cx - w / 2, 3), round(y1 + 1.905 + 2.54 * i, 3)) for i, w in enumerate(widths)]
+        return [(round(x0, 3), round(y0 - 1.27, 3)), (round(x0, 3), round(y1 + 1.905, 3))][: len(texts)]
 
     def schematic(self) -> str:
         ns = self.namespace
@@ -1165,7 +1455,14 @@ class Design:
                 self._symbol_instance(ref, sym, net, "", (x, y), root, key, hidden_fields=True, in_bom=False)
             )
 
-        for part in self.parts:
+        for part in self.parts if not self.sch_wires else ():
+            places = None
+            if part.sch_rot:
+                sides = {self._pin_point(part, p)[2:] for p in part.symbol.pins if not p.hidden and p.number}
+                spots = self._field_spots(
+                    part.symbol, part.sch_at, part.sch_rot, [part.ref, part.value], sides
+                )
+                places = dict(zip(("Reference", "Value"), spots, strict=True))
             body.append(
                 self._symbol_instance(
                     part.ref,
@@ -1178,6 +1475,8 @@ class Design:
                     part.descr,
                     part.datasheet,
                     in_bom=part.in_bom,
+                    rot=part.sch_rot,
+                    places=places,
                 )
             )
             for pin in part.symbol.pins:
@@ -1212,7 +1511,9 @@ class Design:
         flag_sym = self.symbol(f"{POWER_LIB}:PWR_FLAG")
         lib_symbols.setdefault(flag_sym.lib_id, flag_sym.node)
         fx, fy = 20.32, 20.32
-        for i, net in enumerate(self.flagged_nets):
+        if self.sch_wires:
+            self._wired(root, lib_symbols, body)
+        for i, net in enumerate(self.flagged_nets if not self.sch_wires else ()):
             x = fx + i * 12.7
             body.append(
                 self._symbol_instance(
@@ -1243,7 +1544,7 @@ class Design:
             ["generator", Q("eeschema")],
             ["generator_version", Q("9.0")],
             ["uuid", root],
-            ["paper", Q("A3")],
+            ["paper", Q(self.sheet)],
         ]
         if self.title:
             sch.append(["title_block", ["title", Q(self.title)], ["company", Q("EE Workcenter")]])
@@ -1252,6 +1553,353 @@ class Design:
         sch.append(["sheet_instances", ["path", Q("/"), ["page", Q("1")]]])
         sch.append(["embedded_fonts", "no"])
         return dumps(sch) + "\n"
+
+    def _wired(self, root: Q, lib_symbols: dict[str, Node], body: list[Node]) -> None:
+        """The parts, power symbols, labels and wires of a wired schematic (`sch_wires`).
+
+        Every pin gets one cell of wire out of its end (its exit). A power pin's exit takes a power
+        symbol pointing away from the part, and the exits of neighbouring pins of one power net on one
+        side of a part share a wire and a symbol. A net in `sch_label_nets` or with one pin gets a label
+        on each exit. Every other net is wired, shortest first, by growing a tree from one pin to the
+        nearest pin left; a pin no path reaches gets a label, and so does the tree it was cut from.
+        """
+        ns = self.namespace
+        g = SCH_GRID
+        if self.sheet not in SHEETS:
+            raise ValueError(f"sheet must be one of {', '.join(SHEETS)}, not {self.sheet!r}")
+        w, h = SHEETS[self.sheet]
+        r = SchRouter(int(w / g), int(h / g), round(12.7 / g))
+        for i in range(int((w - 122) / g), int(w / g) + 1):  # the title block, bottom right
+            for j in range(int((h - 46) / g), int(h / g) + 1):
+                r.blocked.add((i, j))
+
+        def cell(x: float, y: float, what: str) -> Cell:
+            i, j = round(x / g), round(y / g)
+            if abs(i * g - x) > 1e-3 or abs(j * g - y) > 1e-3:
+                raise ValueError(f"{what} at {x:.3f}, {y:.3f} is off the {g} mm grid; move the part")
+            return (i, j)
+
+        def cells_in(box: tuple[float, float, float, float]) -> list[Cell]:
+            x0, y0, x1, y1 = box
+            return [
+                (i, j)
+                for i in range(math.ceil(x0 / g - 1e-6), math.floor(x1 / g + 1e-6) + 1)
+                for j in range(math.ceil(y0 / g - 1e-6), math.floor(y1 / g + 1e-6) + 1)
+            ]
+
+        def area(box: tuple[float, float, float, float], soft: float | None = None) -> None:
+            for c in cells_in(box):
+                if soft is None:
+                    r.blocked.add(c)
+                else:
+                    r.soft[c] = max(r.soft.get(c, 0.0), soft)
+
+        def text_area(x: float, y: float, text: str) -> None:
+            area((x, y - 0.635, x + len(text) * TEXT_ADVANCE, y + 0.635), SchRouter.TEXT)
+
+        anchors: set[Cell] = set()  # power symbols and labels: wire ends that are not pins
+        names: set[Cell] = set()  # the labels that name a wired net, on a run of its wire
+        labelled: dict[str, list[Cell]] = {}
+
+        def label(net: str, p: Cell, e: Cell, key: str) -> None:
+            r.add_path(net, [p, e])
+            dx, dy = e[0] - p[0], e[1] - p[1]
+            body.append(self._label(net, e[0] * g, e[1] * g, dx, dy, uid(ns, key)))
+            anchors.add(e)
+            labelled.setdefault(net, []).append(e)
+            length = len(net) * TEXT_ADVANCE
+            x, y = e[0] * g, e[1] * g
+            if dx:  # level text above the wire's line
+                area((min(x, x + dx * length), y - 1.27, max(x, x + dx * length), y), SchRouter.TEXT)
+            else:
+                area((x - 1.27, min(y, y + dy * length), x, max(y, y + dy * length)), SchRouter.TEXT)
+
+        power_count = 0
+
+        def power(net: str, e: Cell, d: tuple[int, int], key: str) -> None:
+            """A power symbol on the wire end e, pointing along d; moved out along d, the wire with it,
+            while its drawing would land on something already on the sheet."""
+            nonlocal power_count
+            power_count += 1
+            sym = self.symbol(f"{POWER_LIB}:{self.power_nets[net]}")
+            lib_symbols.setdefault(sym.lib_id, sym.node)
+            y0, y1 = symbol_box(sym)[1::2]
+            natural = (0, 1) if y0 + y1 < 0 else (0, -1)  # where the symbol's drawing hangs from its pin
+            rot = next(t for t in (0, 90, 180, 270) if tuple(round(v) for v in rot_vec(*natural, t)) == d)
+            a = e
+            a, run = e, [e]
+            for k in range(5):
+                cand = [(e[0] + d[0] * i, e[1] + d[1] * i) for i in range(k + 1)]
+                if not all(r.free(c, net) and (c == e or c not in r.ends) for c in cand):
+                    break  # the wire out would touch something: no further
+                drawn = cells_in(self._sheet_box(sym, (cand[-1][0] * g, cand[-1][1] * g), rot))
+                if all(
+                    c not in r.blocked and c not in r.node and not r.along(c, 0) and not r.along(c, 1)
+                    for c in drawn
+                    if c != cand[-1]
+                ):
+                    a, run = cand[-1], cand
+                    break
+            # with no clear spot the symbol stays on e and only its drawing overlaps: a symbol joins
+            # the sheet at its pin, so the overlap is untidy but never a connection
+            if len(run) > 1:
+                r.add_path(net, run)
+            at = (a[0] * g, a[1] * g)
+            area(self._sheet_box(sym, at, rot))
+            r.blocked.discard(a)
+            (spot,) = self._field_spots(sym, at, rot, [net], {(-d[0], -d[1])}, ("Value",))
+            text_area(*spot, net)
+            anchors.add(a)
+            labelled.setdefault(net, []).append(a)  # power symbols of one name join, as labels do
+            body.append(
+                self._symbol_instance(
+                    f"#PWR{power_count:02d}",
+                    sym,
+                    net,
+                    "",
+                    at,
+                    root,
+                    key,
+                    in_bom=False,
+                    rot=rot,
+                    places={"Value": spot},
+                    hidden=("Reference",),
+                )
+            )
+
+        # parts and their pins
+        terminals: dict[str, list[tuple[Cell, Cell, str, str]]] = {}  # net -> (end, exit, ref, "REF pin N")
+        pin_ends: set[Cell] = set()
+        for part in self.parts:
+            sym = part.symbol
+            box = self._sheet_box(sym, part.sch_at, part.sch_rot)
+            area((box[0] - g, box[1] - g, box[2] + g, box[3] + g), SchRouter.NEAR)
+            area(box)
+            sides: set[tuple[int, int]] = set()
+            for pin in sym.pins:
+                if pin.hidden or not pin.number:
+                    continue
+                x, y, dx, dy = self._pin_point(part, pin)
+                sides.add((dx, dy))
+                what = f"{part.ref} pin {pin.number}"
+                p = cell(x, y, what)
+                for k in range(1, round(pin.length / g)):  # the pin's own line, from its end to the body
+                    r.blocked.add((p[0] - dx * k, p[1] - dy * k))
+                net = part.nets.get(pin.number, f"~nc/{part.ref}/{pin.number}")
+                if r.node.get(p, net) != net:
+                    raise ValueError(f"{what}: its end touches another net's pin; move the part")
+                r.node[p] = net
+                r.ends.add(p)
+                if pin.number not in part.nets:
+                    body.append(
+                        [
+                            "no_connect",
+                            ["at", fmt(x), fmt(y)],
+                            ["uuid", uid(ns, f"nc/{part.ref}/{pin.number}")],
+                        ]
+                    )
+                    continue
+                pin_ends.add(p)
+                t = terminals.setdefault(net, [])
+                if all(o[0] != p for o in t):  # stacked pins of one net are one connection
+                    t.append((p, (p[0] + dx, p[1] + dy), part.ref, what))
+            texts = [part.ref, part.value]
+            spots = self._field_spots(sym, part.sch_at, part.sch_rot, texts, sides)
+            for (sx, sy), text in zip(spots, texts, strict=True):
+                text_area(sx, sy, text)
+            body.append(
+                self._symbol_instance(
+                    part.ref,
+                    sym,
+                    part.value,
+                    part.footprint.lib_id if part.footprint else "",
+                    part.sch_at,
+                    root,
+                    f"symbol/{part.ref}",
+                    part.descr,
+                    part.datasheet,
+                    in_bom=part.in_bom,
+                    rot=part.sch_rot,
+                    places=dict(zip(("Reference", "Value"), spots, strict=True)),
+                )
+            )
+        for net, terms in sorted(terminals.items()):
+            for _, e, _, what in terms:
+                if not r.free(e, net) or e in r.ends:
+                    raise ValueError(f"{what}: the cell beside its end is taken; move the part")
+                r.node[e] = net
+
+        # power flags, top left, as the stub-and-label schematic has them
+        flag_sym = self.symbol(f"{POWER_LIB}:PWR_FLAG")
+        for i, net in enumerate(self.flagged_nets):
+            fx, fy = 20.32 + i * 12.7, 20.32
+            f, a = cell(fx, fy, f"PWR_FLAG of {net}"), cell(fx, fy + 2.54, f"PWR_FLAG of {net}")
+            area(self._sheet_box(flag_sym, (fx, fy), 0))
+            r.blocked.discard(f)
+            body.append(
+                self._symbol_instance(
+                    f"#FLG{i + 1:02d}",
+                    flag_sym,
+                    "PWR_FLAG",
+                    "",
+                    (fx, fy),
+                    root,
+                    f"flag/{net}",
+                    hidden_fields=True,
+                    in_bom=False,
+                )
+            )
+            r.add_path(net, [f, (f[0], f[1] + 1), a])
+            power(net, a, (0, 1), f"flagpwr/{net}")
+
+        # power pins: a symbol on each run of neighbouring exits
+        for net in sorted(n for n in terminals if n in self.power_nets):
+            sides_of: dict[tuple[str, tuple[int, int]], list[tuple[Cell, Cell]]] = {}
+            for p, e, ref, _ in terminals.pop(net):
+                sides_of.setdefault((ref, (e[0] - p[0], e[1] - p[1])), []).append((p, e))
+            for (ref, d), items in sorted(sides_of.items()):
+                along = 1 if d[0] else 0  # the coordinate that runs along the side
+                items.sort(key=lambda t: (t[1][along], t[1][1 - along]))
+                runs = [[items[0]]]
+                for p, e in items[1:]:
+                    q = runs[-1][-1][1]
+                    gap = e[along] - q[along]
+                    between = [
+                        (q[0] + (k if along == 0 else 0), q[1] + (k if along == 1 else 0))
+                        for k in range(1, gap)
+                    ]
+                    if e[1 - along] == q[1 - along] and gap <= 2 and all(r.free(c, net) for c in between):
+                        runs[-1].append((p, e))
+                    else:
+                        runs.append([(p, e)])
+                for run in runs:
+                    for p, e in run:
+                        r.add_path(net, [p, e])
+                    first, last = run[0][1], run[-1][1]
+                    if first != last:
+                        r.add_path(
+                            net,
+                            [
+                                (first[0] + (k if along == 0 else 0), first[1] + (k if along == 1 else 0))
+                                for k in range(last[along] - first[along] + 1)
+                            ],
+                        )
+                    power(net, first, d, f"pwr/{ref}/{first[0]}/{first[1]}")
+
+        # labels where asked, and on one-pin nets
+        for net in sorted(terminals):
+            terms = terminals[net]
+            if net in self.sch_label_nets or len(terms) == 1:
+                for p, e, _, what in terminals.pop(net):
+                    label(net, p, e, f"label/{what}")
+
+        # wires, the shortest nets first
+        def spread(terms: list) -> tuple[int, str]:
+            xs = [t[1][0] for t in terms]
+            ys = [t[1][1] for t in terms]
+            return max(xs) - min(xs) + max(ys) - min(ys)
+
+        for net in sorted(terminals, key=lambda n: (spread(terminals[n]), n)):
+            terms = sorted(terminals[net], key=lambda t: (t[1][0], t[1][1]))
+            p0, e0, _, what0 = terms[0]
+            r.add_path(net, [p0, e0])
+            tree = {e0}
+            left, failed = terms[1:], []
+            while left:
+                t = min(
+                    left, key=lambda t: (min(abs(t[1][0] - c[0]) + abs(t[1][1] - c[1]) for c in tree), t[1])
+                )
+                left.remove(t)
+                p, e = t[0], t[1]
+                sources = {
+                    c: None for c in tree if not any(n != net for axis in (0, 1) for n in r.along(c, axis))
+                }
+                path = r.route(net, sources, p, e)
+                if path is None:
+                    failed.append(t)
+                    continue
+                r.add_path(net, path)
+                tree.update(path[:-1])
+            if failed:
+                for p, e, _, what in failed:
+                    label(net, p, e, f"label/{what}")
+                d0 = (e0[0] - p0[0], e0[1] - p0[1])
+                body.append(self._label(net, e0[0] * g, e0[1] * g, d0[0], d0[1], uid(ns, f"label/{what0}")))
+                anchors.add(e0)
+                labelled.setdefault(net, []).append(e0)
+
+        # Each wired net carries its name once, so KiCad's net is the board's and a reader sees it: a
+        # label on a level run of its wire, never on a bend, a tee or a crossing (a label joins every
+        # wire through its point), where its text covers the least.
+        def covered(c: Cell) -> bool:
+            return (
+                c in r.blocked or r.soft.get(c, 0.0) >= SchRouter.TEXT or bool(r.along(c, 0) | r.along(c, 1))
+            )
+
+        for net in sorted(n for n in terminals if n not in labelled):
+            reach = math.ceil(len(net) * TEXT_ADVANCE / g)
+            best = None
+            for (c, axis), n in sorted(r.edge.items()):
+                # c inside a straight run: wire of this net on both sides, no end, bend or crossing at c
+                before = ((c[0] - 1, c[1]), 0) if axis == 0 else ((c[0], c[1] - 1), 1)
+                if n != net or r.edge.get(before) != net:
+                    continue
+                if c in r.node or any(o != net for o in r.along(c, 1 - axis)):
+                    continue
+                if axis == 0:  # level text above the wire, reading right
+                    over = sum(covered((c[0] + k, c[1] - 1)) for k in range(reach + 1))
+                else:  # text left of the wire, reading up
+                    over = sum(covered((c[0] - 1, c[1] - k)) for k in range(reach + 1))
+                key = (over, axis, c[1], c[0])
+                if best is None or key < best[0]:
+                    best = (key, c, (1, 0) if axis == 0 else (0, -1))
+            if best is None:  # no level run: the name goes on the first pin's exit
+                p0, e0 = sorted(terminals[net], key=lambda t: (t[1][0], t[1][1]))[0][:2]
+                best = (None, e0, (e0[0] - p0[0], e0[1] - p0[1]))
+            _, at, (dx, dy) = best
+            body.append(self._label(net, at[0] * g, at[1] * g, dx, dy, uid(ns, f"name/{net}")))
+            r.node[at] = net
+            anchors.add(at)
+            labelled.setdefault(net, []).append(at)
+            names.add(at)
+
+        # every net's wires in one piece, or each piece labelled
+        for net in sorted(set(r.edge.values())):
+            parent: dict[Cell, Cell] = {}
+
+            def find(c: Cell, parent: dict[Cell, Cell] = parent) -> Cell:
+                while parent.setdefault(c, c) != c:
+                    parent[c] = parent[parent[c]]
+                    c = parent[c]
+                return c
+
+            for (c, axis), n in r.edge.items():
+                if n == net:
+                    o = (c[0] + 1, c[1]) if axis == 0 else (c[0], c[1] + 1)
+                    parent[find(c)] = find(o)
+            pieces = {find(c) for c in parent}
+            if len(pieces) > 1 and {find(c) for c in labelled.get(net, [])} != pieces:
+                raise RuntimeError(f"schematic wiring: {net} came out in {len(pieces)} unlabelled pieces")
+            segs, dots = r.segments(net, pin_ends | anchors, pin_ends | (anchors - names))
+            for a, b in segs:
+                body.append(
+                    [
+                        "wire",
+                        ["pts", ["xy", fmt(a[0] * g), fmt(a[1] * g)], ["xy", fmt(b[0] * g), fmt(b[1] * g)]],
+                        ["stroke", ["width", "0"], ["type", "default"]],
+                        ["uuid", uid(ns, f"wire/{net}/{a}/{b}")],
+                    ]
+                )
+            for c in dots:
+                body.append(
+                    [
+                        "junction",
+                        ["at", fmt(c[0] * g), fmt(c[1] * g)],
+                        ["diameter", "0"],
+                        ["color", "0", "0", "0", "0"],
+                        ["uuid", uid(ns, f"junction/{net}/{c}")],
+                    ]
+                )
 
     def _label(self, net: str, x: float, y: float, dx: int, dy: int, u: Q) -> Node:
         if dx > 0:
@@ -1283,44 +1931,46 @@ class Design:
         datasheet: str = "~",
         hidden_fields: bool = False,
         in_bom: bool = True,
+        rot: int = 0,
+        places: dict[str, tuple[float, float]] | None = None,
+        hidden: tuple[str, ...] = (),
     ) -> Node:
+        """`places` puts a field's text start (left end, mid-height, from `_field_spots`) where given and
+        level: KiCad adds the field's angle to the symbol's and flips its justification at 90 and 180,
+        read from its plots. `hidden` hides those fields."""
         ns = self.namespace
         x, y = at
         hide = ["effects", ["font", ["size", "1.27", "1.27"]], ["hide", "yes"]]
+        shown = [
+            "effects",
+            ["font", ["size", "1.27", "1.27"]],
+            ["justify", "left" if rot in (0, 270) else "right"],
+        ]
+        # Default field positions: reference above-right, value below-right of the anchor.
+        spots = {"Reference": (x + 1.27, y - 1.27), "Value": (x + 1.27, y + 1.27), **(places or {})}
+        texts = {"Reference": ref, "Value": value}
+        fields = [
+            [
+                "property",
+                Q(name),
+                Q(texts[name]),
+                ["at", fmt(spots[name][0]), fmt(spots[name][1]), str(rot % 180)],
+                hide if hidden_fields or name in hidden else shown,
+            ]
+            for name in ("Reference", "Value")
+        ]
         node: Node = [
             "symbol",
             ["lib_id", Q(sym.lib_id)],
-            ["at", fmt(x), fmt(y), "0"],
+            ["at", fmt(x), fmt(y), str(rot)],
             ["unit", "1"],
             ["exclude_from_sim", "no"],
             ["in_bom", "yes" if in_bom else "no"],
             ["on_board", "no" if ref.startswith("#") else "yes"],
             ["dnp", "no"],
             ["uuid", uid(ns, key)],
+            *fields,
         ]
-        # Field positions: reference above-right, value below-right of the anchor.
-        node.append(
-            [
-                "property",
-                Q("Reference"),
-                Q(ref),
-                ["at", fmt(x + 1.27), fmt(y - 1.27), "0"],
-                hide
-                if hidden_fields
-                else ["effects", ["font", ["size", "1.27", "1.27"]], ["justify", "left"]],
-            ]
-        )
-        node.append(
-            [
-                "property",
-                Q("Value"),
-                Q(value),
-                ["at", fmt(x + 1.27), fmt(y + 1.27), "0"],
-                hide
-                if hidden_fields
-                else ["effects", ["font", ["size", "1.27", "1.27"]], ["justify", "left"]],
-            ]
-        )
         node.append(["property", Q("Footprint"), Q(footprint), ["at", fmt(x), fmt(y), "0"], hide])
         node.append(["property", Q("Datasheet"), Q(datasheet), ["at", fmt(x), fmt(y), "0"], hide])
         node.append(["property", Q("Description"), Q(descr), ["at", fmt(x), fmt(y), "0"], hide])
