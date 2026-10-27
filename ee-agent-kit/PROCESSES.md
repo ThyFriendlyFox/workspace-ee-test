@@ -521,3 +521,32 @@ close-out.
 
 Done when: ERC is 0/0, the DRC shows no parity warning, and the plot in the
 README is the one that was read.
+
+## P25 — Prices and part numbers from a distributor
+
+When: looking up a part, its price or its stock at a distributor, or
+writing a parts file (the `procurement` skill).
+
+1. Reach the supplier the sanctioned way: its API with the user's own
+   credentials, or its pages with the fetch tool where its robots.txt allows
+   (Digi-Key's allows Claude-User). A script that gets a 403 has been
+   refused; never retry it with a browser's user agent or any other disguise
+   (M55).
+2. Find the product page by search, never by a URL from memory, and confirm
+   the manufacturer part number printed on the page before reading a price
+   (M54).
+3. One part per value and footprint, meeting the strictest use on every
+   board that names it (voltage, dielectric, power), read from the design's
+   notes.
+4. Record what the page shows: the supplier number of the cut tape or bulk
+   packaging, every price break, the stock (0 when out of stock, the expected
+   date in the note), the date read and the URL. No price from memory or a
+   search snippet.
+5. A part the supplier does not carry gets the supplier that does, or no
+   price and a note saying where it was looked for; never a part with
+   another footprint without a design change.
+6. `workcenter procure` prices the BOM; its "Not priced", "Short of stock"
+   and "Prices to check again" lists go into the report.
+
+Done when: every priced row in the parts file has the URL it was read from
+and the date, and the report carries `procure`'s totals and its three lists.

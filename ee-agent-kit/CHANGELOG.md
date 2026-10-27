@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 
 ## [Unreleased]
 ### Added
+- `workcenter procure <project> --parts FILE --boards 1,10`: prices the schematic's BOM from parts files and writes `procure/bom.csv`, `parts.csv` and `parts.md` with the cheapest order per line and totals per supplier; fails on a line with no part or no price, `--strict` also on a line short of stock or a price older than 90 days. The `procurement` skill and P25 say how a parts file is filled (M54, M55).
 - `kicadgen`: wired schematics (`Design.sch_wires`): a grid router (`SchRouter`) draws each net's wires round the parts, with junctions at tees, power symbols pointing away from their pins, and each net's name on its wire; `sch_rot` turns a symbol, `sch_label_nets` keeps labels for chosen nets, `sheet` picks the paper. Off by default, so existing schematics regenerate byte for byte (M51, P24).
 - `workcenter render` names every part the 3D views draw without a body; `render --strict` fails on one (M52).
 - `wrlgen`: `leadless` (QFN, DFN, SON) and `gullwing` (SOT-23, SOT-523, SC-70) bodies for packages whose library body KiCad does not ship.

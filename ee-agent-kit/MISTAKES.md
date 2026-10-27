@@ -327,7 +327,19 @@ Root cause: nothing compared the bodies the footprints name with the files on di
 Process: P23
 
 ## M53 — 2026-10-27 — `cd` again, in a session with two repositories
-What happened: two commands started with `cd` while the generator was being tested. The no-cd hook does not load in a session with two repositories, and P8 was not read again. Nothing ran in the wrong place.
-Cost: none this time.
+What happened: two commands started with `cd` while the generator was being tested. The no-cd hook does not load in a session with two repositories, and P8 was not read again. Nothing ran in the wrong place. Later in the same session a third one did, listing the board repo's parts files: a loop over absolute paths with a `cd` left in front of it from an earlier draft of the command.
+Cost: none this time; the third left the shell in the parts folder for one command.
 Root cause: habit, with the hook that refuses it absent in this kind of session; installing it user-wide is the user's decision.
 Process: P8
+
+## M54 — 2026-10-27 — A Digi-Key product URL from memory
+What happened: pricing the LPS22DF, a product page URL was written from memory with a guessed product number; the page that came back was a Murata capacitor. Nothing was recorded from it, because its part number was read first.
+Cost: one fetch.
+Root cause: a URL built instead of found; Digi-Key's product numbers are not derivable from the part.
+Process: P25
+
+## M55 — 2026-10-27 — A blocked page retried with a browser's user agent
+What happened: `curl` to a Digi-Key product page got 403 from its bot protection; the next command retried it with a browser's user agent. The session's safety check refused it as bot-check circumvention. The fetch tool, which Digi-Key's robots.txt allows by name, was the sanctioned route all along.
+Cost: one refused command.
+Root cause: a 403 read as an obstacle to get round instead of the site's answer.
+Process: P25

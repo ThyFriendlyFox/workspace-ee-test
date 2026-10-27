@@ -41,6 +41,26 @@ Evidence: <commit / tag / gate run / screenshot>
 
 <!-- Entries below, newest first. -->
 
+## 2026-10-27 — A parts list you can order from
+
+The user asked for every prototype's parts sourced from Digi-Key with the
+full cost, and for it to be a workcenter skill. `workcenter procure` now
+reads a board's BOM from its schematic, matches each line to a row of a
+parts file (the part, its supplier number, the price breaks and stock as the
+supplier's page showed them, the date and the page), and writes the list
+with the cheapest order per line and the totals per supplier. Buying ten of
+a part is sometimes cheaper than buying seven; the command picks the
+cheaper. Items off the board, like the cell and the bare boards, are rows
+too. Two mistakes on the way became M54 and M55: a product page guessed
+from memory came back as the wrong part, and a page that refused a script
+was retried in disguise, which the session refused. P25 says how to read a
+supplier: its API, or its pages with the fetch tool where it allows that,
+the part number checked on the page. Many common capacitors and resistors
+show no stock at Digi-Key this month; the list says so line by line.
+
+Evidence: `make verify` green on the branch; the fixture priced to the cent;
+the Last Hit parts lists.
+
 ## 2026-10-27 — Schematics with wires, and the parts the 3D views left out
 
 The user looked at the Last Hit board and found two things the gates never

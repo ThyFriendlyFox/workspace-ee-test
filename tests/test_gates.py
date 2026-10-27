@@ -300,6 +300,105 @@ def test_render_names_a_bare_part_and_strict_fails_on_it(tmp_path, monkeypatch):
     assert code == 0 and records[0]["details"]["no_body"] == []  # 2D views draw no bodies
 
 
+# ------------------------------------------------------------ procure
+
+PARTS = "\n".join(
+    [
+        "Value,Footprint,Qty,Manufacturer,MPN,Supplier,SKU,Pack,Breaks,Stock,Checked,URL,Note",
+        "100n,Capacitor_SMD:C_0603_1608Metric,,Samsung,CL10B104KB8NNNC,Digi-Key,1276-1000-1-ND,,"
+        "1:0.10 10:0.032 50:0.0216,0,{today},,",
+        "Conn_01x03,Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical,,Sullins,PREC003SAAN-RC,"
+        "Digi-Key,35-PREC003SAAN-RC-ND,,1:0.10 10:0.04,40331,{today},,",
+        "10k,Resistor_SMD:R_0603_1608Metric,,Yageo,RC0603FR-0710KL,Digi-Key,311-10.0KHRCT-ND,,"
+        "1:0.10 10:0.025 25:0.0188,0,{today},,",
+        "PCB,,1,,,OSH Park,,3,3:2.00,,{today},,sets of 3",
+        "",
+    ]
+)
+
+
+def parts_file(tmp_path: Path, text: str = PARTS) -> Path:
+    import datetime
+
+    path = tmp_path / "parts.csv"
+    path.write_text(text.format(today=datetime.date.today().isoformat()), encoding="utf-8")
+    return path
+
+
+def test_order_takes_the_cheaper_break_and_whole_packs():
+    cli = load_cli_module()
+    breaks = cli.parse_breaks("1:0.10 10:0.021")
+    assert cli.order_for(breaks, 1, 7) == (10, cli.Decimal("0.210"))  # 10 for $0.21 beats 7 for $0.70
+    assert cli.order_for(breaks, 1, 1) == (1, cli.Decimal("0.10"))
+    assert cli.order_for(cli.parse_breaks("3:2.00"), 3, 10) == (12, cli.Decimal("24.00"))
+    for bad in ("1-0.10", "10:0.1 5:0.2", "1:x"):
+        with pytest.raises(ValueError):
+            cli.parse_breaks(bad)
+
+
+@needs_kicad
+def test_procure_prices_the_fixture_from_its_parts_file(tmp_path):
+    code, records = run(
+        "procure", BOARDS / "pass-rc-divider", "--out", tmp_path / "out", "--parts", parts_file(tmp_path)
+    )
+    assert code == 0, records
+    (record,) = records
+    # 1 unit: 0.10 + 0.10 + 2 x 0.10 at Digi-Key, a set of 3 boards at 2.00; 10 units: 10 x 0.032,
+    # 10 x 0.04, 25 x 0.0188 (cheaper than 20 x 0.025), 12 boards at 2.00.
+    assert record["details"]["totals"] == {
+        "1": {"Digi-Key": "0.40", "OSH Park": "6.00"},
+        "10": {"Digi-Key": "1.19", "OSH Park": "24.00"},
+    }
+    assert record["details"]["short"] == [
+        "C1: 0 in stock at Digi-Key, 10 needed for 10",
+        "R1,R2: 0 in stock at Digi-Key, 20 needed for 10",
+    ]
+    procure = tmp_path / "out" / "procure"
+    assert (
+        (procure / "bom.csv").read_text(encoding="utf-8").startswith('"Refs","Value","Footprint","Qty","DNP"')
+    )
+    rows = (procure / "parts.csv").read_text(encoding="utf-8").splitlines()
+    assert rows[0].endswith("Order for 1,Cost for 1,Order for 10,Cost for 10") and len(rows) == 5
+    assert "| 10 | $1.19 | $24.00 | $25.19 | $2.52 |" in (procure / "parts.md").read_text(encoding="utf-8")
+    code, records = run(
+        "procure",
+        BOARDS / "pass-rc-divider",
+        "--out",
+        tmp_path / "out",
+        "--parts",
+        parts_file(tmp_path),
+        "--strict",
+    )
+    assert code == 1 and records[0]["status"] == "fail"  # short of stock fails a strict run
+
+
+@needs_kicad
+def test_procure_fails_on_a_line_with_no_part_or_no_price(tmp_path):
+    text = "\n".join(line for line in PARTS.splitlines() if not line.startswith("Conn_01x03"))
+    text = text.replace("1:0.10 10:0.025 25:0.0188", "") + "\n"
+    code, records = run(
+        "procure",
+        BOARDS / "pass-rc-divider",
+        "--out",
+        tmp_path / "out",
+        "--parts",
+        parts_file(tmp_path, text),
+    )
+    assert code == 1
+    details = records[0]["details"]
+    assert details["unmatched"] == [
+        "J1 Conn_01x03 Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical"
+    ]
+    assert details["unpriced"] == ["R1,R2: RC0603FR-0710KL, at Digi-Key"]
+
+
+def test_procure_without_a_schematic_or_parts_file_skips(tmp_path):
+    code, records = run("procure", BOARDS / "fail-sim-spec", "--out", tmp_path / "out")
+    assert code == 2 and records[0]["summary"] == "no schematic in project"
+    code, records = run("procure", BOARDS / "pass-rc-divider", "--out", tmp_path / "out")
+    assert code == 2 and records[0]["summary"].startswith("no parts file")
+
+
 def test_fixtures_match_generator():
     proc = subprocess.run(
         [sys.executable, str(BOARDS / "generate.py"), "--check"], capture_output=True, text=True, check=False

@@ -12,8 +12,9 @@ behavior change. The weekly cycle (WEEKLY.md step 5) refreshes it.
 | Autoroute, generated designs | ✅ | `workcenter design --route --rounds`: DSN writer, FreeRouting, session merge, pour islands stitched or re-routed; two round-trip tests make DRC GREEN when FreeRouting is installed. |
 | Autoroute, hand-drawn boards | 🚧 | Produces a session from a KiCad-exported DSN; import is manual. ROADMAP item 1. |
 | `workcenter render` | ✅ | Schematic, board top and bottom, 3D top, bottom and isometric images with part bodies when `kicad-packages3d` is installed, plus the project's own `wrlgen` bodies; every layer with something on it, one PNG each, and an overview sheet; on request a GIF of the 3D board turning round (FFmpeg). PNG through librsvg. `tests/test_gates.py` (21 tests): layers drawn and empty ones skipped on the fixture, the view list, the GIF's frames and loop, the skip without FFmpeg, the parts drawn without a 3D body and `--strict` failing on one. |
-| Skills | ✅ | 6 skills with frontmatter, checked by `make verify`. |
-| Mistake log and processes | ✅ | `MISTAKES.md` M1 to M53, `PROCESSES.md` P1 to P24; `make verify` checks every entry names an existing process and every process has a "Done when" line. |
+| `workcenter procure` | ✅ | A schematic's BOM priced from parts files: the cheapest order per line at each unit count, totals per supplier, lines not priced, short of stock or checked too long ago. `tests/test_gates.py`: the fixture priced to the cent, the failures and the skip. |
+| Skills | ✅ | 7 skills with frontmatter, checked by `make verify`. |
+| Mistake log and processes | ✅ | `MISTAKES.md` M1 to M55, `PROCESSES.md` P1 to P25; `make verify` checks every entry names an existing process and every process has a "Done when" line. |
 | Cloud environment | 🚧 | `environment/setup.sh` written; not yet set on an environment by a human. |
 | Docker image | 🚧 | `Dockerfile` written; `release.yml` builds it on the first tag. |
 | CI | ✅ | `ci.yml` green on PR #1; runs on every PR and push to `main`. |

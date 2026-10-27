@@ -31,6 +31,7 @@ passed every gate. "Done" means `workcenter gates <project>` prints GREEN.
 | `autoroute` | A board has unrouted nets and FreeRouting should route them. Headless for generated designs. |
 | `simulate` | A circuit must meet a measurable spec before layout. |
 | `blog-post` | A human asks for a public write-up of recent work. |
+| `procurement` | A human asks what a board costs, for its parts list, or to order its parts. |
 
 ## Gates
 
@@ -55,6 +56,14 @@ spin, or all. Its summary names every part the 3D views draw without a body
 A finished board version shows its layer sheets and a turning
 GIF of every board and its assembly in its README (`PROCESSES.md` P23), and
 a wired schematic someone has read (`sch_wires`, P24).
+
+Not a gate either: `workcenter procure <project> --parts parts.csv` prices the
+schematic's BOM from a parts file (supplier, supplier number, price breaks,
+stock, date and URL per part, items off the board too) and writes
+`build/procure/bom.csv`, `parts.csv` and `parts.md`: the orderable list with
+the cheapest order per line and totals per supplier for each `--boards`
+count. It fails on a line with no part or no price; `--strict` also on a
+line short of stock or a price older than 90 days (`PROCESSES.md` P25).
 
 A project may add gates. It may not remove these.
 

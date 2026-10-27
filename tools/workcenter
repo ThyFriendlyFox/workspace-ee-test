@@ -12,6 +12,8 @@ Exit codes: 0 every gate passed, 1 a gate failed or an engine errored,
 from __future__ import annotations
 
 import argparse
+import csv
+import datetime
 import json
 import math
 import os
@@ -21,6 +23,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
 WC_ROOT = Path(os.environ.get("WORKCENTER_ROOT", "/opt/workcenters/ee"))
@@ -762,6 +765,369 @@ def gate_render(
     )
 
 
+# ------------------------------------------------------------- procurement
+
+PARTS_COLUMNS = ("Value", "Footprint", "Qty", "Manufacturer", "MPN", "Supplier", "SKU", "Pack", "Breaks")
+STALE_DAYS = 90  # a price older than this is a warning (a failure with --strict)
+CENT = Decimal("0.01")
+
+
+@dataclass
+class PartRow:
+    """One row of a parts file: what to buy for a BOM line (Value and Footprint), or an item off the
+    board (no Footprint, Qty per unit). Supplier "none" marks a line that is copper, nothing to buy."""
+
+    value: str
+    footprint: str
+    qty: int
+    manufacturer: str
+    mpn: str
+    supplier: str
+    sku: str
+    pack: int
+    breaks: list[tuple[int, Decimal]]
+    stock: int | None
+    checked: str
+    url: str
+    note: str
+    source: str  # file:line, for messages
+
+    @property
+    def buys(self) -> bool:
+        return self.supplier.lower() != "none"
+
+
+def parse_breaks(text: str) -> list[tuple[int, Decimal]]:
+    """'1:0.10 10:0.021' -> [(1, 0.10), (10, 0.021)]: quantity and unit price, quantities rising."""
+    breaks = []
+    for item in text.split():
+        qty, sep, price = item.partition(":")
+        try:
+            q, p = int(qty.replace(",", "")), Decimal(price.lstrip("$"))
+        except (ValueError, InvalidOperation):
+            raise ValueError(f"price break {item!r} is not QTY:PRICE") from None
+        if not sep or q < 1 or p < 0 or (breaks and q <= breaks[-1][0]):
+            raise ValueError(
+                f"price breaks {text!r}: quantities rise from 1 or more, prices are not negative"
+            )
+        breaks.append((q, p))
+    return breaks
+
+
+def read_parts(path: Path) -> list[PartRow]:
+    rows = []
+    with path.open(encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        missing = [c for c in PARTS_COLUMNS if c not in (reader.fieldnames or [])]
+        if missing:
+            raise ValueError(f"{path}: no column {', '.join(missing)}")
+        for n, r in enumerate(reader, start=2):
+            where = f"{path.name}:{n}"
+            try:
+                stock = r.get("Stock", "").replace(",", "").strip()
+                rows.append(
+                    PartRow(
+                        value=r["Value"].strip(),
+                        footprint=r["Footprint"].strip(),
+                        qty=int(r["Qty"]) if r["Qty"].strip() else 0,
+                        manufacturer=r["Manufacturer"].strip(),
+                        mpn=r["MPN"].strip(),
+                        supplier=r["Supplier"].strip(),
+                        sku=r["SKU"].strip(),
+                        pack=int(r["Pack"]) if r["Pack"].strip() else 1,
+                        breaks=parse_breaks(r["Breaks"]),
+                        stock=int(stock) if stock else None,
+                        checked=r.get("Checked", "").strip(),
+                        url=r.get("URL", "").strip(),
+                        note=r.get("Note", "").strip(),
+                        source=where,
+                    )
+                )
+            except ValueError as exc:
+                raise ValueError(f"{where}: {exc}") from None
+            if not rows[-1].footprint and rows[-1].qty < 1:
+                raise ValueError(f"{where}: an item off the board needs Qty, the number per unit")
+    return rows
+
+
+def unit_price(breaks: list[tuple[int, Decimal]], qty: int) -> Decimal:
+    """The price of the largest break at or below qty (the first break when qty is below it)."""
+    price = breaks[0][1]
+    for q, p in breaks:
+        if q <= qty:
+            price = p
+    return price
+
+
+def order_for(breaks: list[tuple[int, Decimal]], pack: int, need: int) -> tuple[int, Decimal]:
+    """The cheapest order that covers `need`: at least the first break, in multiples of `pack`, and
+    up to a higher break when buying more costs less in all. Returns (quantity, total)."""
+
+    def up(q: int) -> int:
+        return -(-q // pack) * pack
+
+    candidates = {up(max(need, breaks[0][0]))} | {up(q) for q, _ in breaks if q > need}
+    return min(((q, q * unit_price(breaks, q)) for q in candidates), key=lambda c: (c[1], c[0]))
+
+
+def money(d: Decimal) -> str:
+    return f"${d.quantize(CENT, rounding=ROUND_HALF_UP):,}"
+
+
+@timed
+def gate_procure(
+    project: Project, out: Path, parts: list[Path], boards: tuple[int, ...] = (1, 10), strict: bool = False
+) -> Result:
+    """Price the schematic's BOM from parts files: every line matched to a part with its supplier and
+    price breaks, the cheapest order for each board quantity, totals per supplier. Writes
+    procure/bom.csv (the schematic's BOM, grouped), procure/parts.csv and procure/parts.md."""
+    if not project.sch:
+        return Result("procure", "skip", "no schematic in project")
+    if not parts:
+        return Result(
+            "procure", "skip", f"no parts file: name one with --parts or add {project.dir / 'parts.csv'}"
+        )
+    pdir = out / "procure"
+    pdir.mkdir(parents=True, exist_ok=True)
+    bom_csv = pdir / "bom.csv"
+    proc = run(
+        [
+            KICAD_CLI,
+            "sch",
+            "export",
+            "bom",
+            "--fields",
+            "Reference,Value,Footprint,${QUANTITY},${DNP}",
+            "--group-by",
+            "Value,Footprint",
+            "--labels",
+            "Refs,Value,Footprint,Qty,DNP",
+            "--output",
+            bom_csv,
+            project.sch,
+        ]
+    )
+    if proc.returncode != 0 or not bom_csv.is_file():
+        return Result("procure", "error", "kicad-cli wrote no BOM", {"stderr": proc.stderr[-800:]})
+    try:
+        rows = [r for p in parts for r in read_parts(p)]
+    except (OSError, ValueError) as exc:
+        return Result("procure", "error", str(exc))
+    with bom_csv.open(encoding="utf-8", newline="") as fh:
+        bom = [r for r in csv.DictReader(fh) if not r.get("DNP", "").strip()]
+
+    lines = []  # (refs, qty, PartRow | None, value, footprint)
+    for b in bom:
+        match = next(
+            (r for r in rows if r.footprint and r.value == b["Value"] and r.footprint == b["Footprint"]), None
+        )
+        lines.append((b["Refs"], int(b["Qty"]), match, b["Value"], b["Footprint"]))
+    for r in rows:
+        if not r.footprint:
+            lines.append(("", r.qty, r, r.value, ""))
+
+    unmatched = [f"{refs} {value} {fp}" for refs, _, m, value, fp in lines if m is None]
+    unpriced = [
+        f"{refs or value}: {m.mpn or 'no part chosen'}, "
+        + (f"at {m.supplier}" if m.supplier else "no supplier")
+        for refs, _, m, value, _ in lines
+        if m and m.buys and not m.breaks
+    ]
+    today = datetime.date.today()
+    short, stale = [], []
+    suppliers: list[str] = []
+    totals = {n: {} for n in boards}
+    priced = []
+    for refs, qty, m, value, fp in lines:
+        orders = {}
+        if m and m.buys and m.breaks:
+            if m.supplier not in suppliers:
+                suppliers.append(m.supplier)
+            for n in boards:
+                q, cost = order_for(m.breaks, m.pack, qty * n)
+                orders[n] = (q, cost)
+                totals[n][m.supplier] = totals[n].get(m.supplier, Decimal(0)) + cost
+            need = qty * max(boards)
+            if m.stock is not None and m.stock < need:
+                short.append(
+                    f"{refs or value}: {m.stock} in stock at {m.supplier}, {need} needed for {max(boards)}"
+                )
+            try:
+                age = (today - datetime.date.fromisoformat(m.checked)).days
+            except ValueError:
+                age = None
+            if age is None or age > STALE_DAYS:
+                stale.append(f"{refs or value}: price checked {m.checked or 'on no date'}")
+        priced.append((refs, qty, m, value, fp, orders))
+
+    with (pdir / "parts.csv").open("w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(
+            [
+                "Refs",
+                "Qty",
+                "Value",
+                "Footprint",
+                "Manufacturer",
+                "MPN",
+                "Supplier",
+                "SKU",
+                "Stock",
+                "Checked",
+                "URL",
+                "Note",
+            ]
+            + [h for n in boards for h in (f"Order for {n}", f"Cost for {n}")]
+        )
+        for refs, qty, m, value, fp, orders in priced:
+            w.writerow(
+                [refs, qty, value, fp]
+                + (
+                    [
+                        m.manufacturer,
+                        m.mpn,
+                        m.supplier,
+                        m.sku,
+                        "" if m.stock is None else m.stock,
+                        m.checked,
+                        m.url,
+                        m.note,
+                    ]
+                    if m
+                    else [""] * 8
+                )
+                + [
+                    x
+                    for n in boards
+                    for x in ((orders[n][0], f"{orders[n][1]:.2f}") if n in orders else ("", ""))
+                ]
+            )
+
+    def row_md(refs, qty, m, value) -> str:
+        if m is None:
+            return f"| {refs} | {qty} | {value} | not in the parts files | | | | | | |"
+        part = (
+            (f"{m.manufacturer} {m.mpn}".strip() or "no part chosen") if m.buys else "nothing to buy: copper"
+        )
+        link = f"[{m.sku}]({m.url})" if m.url and m.sku else (m.sku or "")
+        unit = money(unit_price(m.breaks, 1)) if m.breaks else ("" if not m.buys else "not priced")
+        stock = "" if m.stock is None else f"{m.stock:,}"
+        note = m.note.replace("|", "/")
+        cells = [
+            refs,
+            qty,
+            value,
+            part,
+            m.supplier if m.buys else "",
+            link,
+            unit,
+            stock,
+        ]
+        return "| " + " | ".join(str(c) for c in [*cells, m.checked, note]) + " |"
+
+    columns = (
+        "Refs",
+        "Qty",
+        "Value",
+        "Part",
+        "Supplier",
+        "Supplier number",
+        "Unit at 1",
+        "Stock",
+        "Checked",
+        "Note",
+    )
+    head = "| " + " | ".join(columns) + " |\n" + "|---" * len(columns) + "|"
+    md = [
+        f"# Parts: {project.name}",
+        "",
+        f"From the schematic (`{project.sch.name}`, grouped by value and footprint) and "
+        + ", ".join(f"`{p.name}`" for p in parts)
+        + ". Prices in USD, as each supplier's page showed them on the date in the row,"
+        " before shipping and tax.",
+        "",
+        "## On the board",
+        "",
+        head,
+        *[row_md(refs, qty, m, value) for refs, qty, m, value, fp, _ in priced if fp],
+        "",
+    ]
+    off = [row_md(refs, qty, m, value) for refs, qty, m, value, fp, _ in priced if not fp]
+    if off:
+        md += ["## Off the board, per unit", "", head, *off, ""]
+    md += [
+        "## Cost",
+        "",
+        "| Units | " + " | ".join(suppliers) + " | Total | Per unit |",
+        "|---" * (len(suppliers) + 3) + "|",
+    ]
+    for n in boards:
+        total = sum(totals[n].values(), Decimal(0))
+        md.append(
+            f"| {n} | "
+            + " | ".join(money(totals[n].get(s, Decimal(0))) for s in suppliers)
+            + f" | {money(total)} | {money(total / n)} |"
+        )
+    md += [
+        "",
+        "Each line orders the cheapest quantity that covers the need: at least the first price break,"
+        " in whole "
+        "packs, and more where a higher break costs less in all.",
+        "",
+    ]
+    for title, items in (
+        ("Not in the parts files", unmatched),
+        ("Not priced", unpriced),
+        ("Short of stock", short),
+        ("Prices to check again", stale),
+    ):
+        if items:
+            md += [f"## {title}", "", *[f"- {i}" for i in items], ""]
+    (pdir / "parts.md").write_text("\n".join(md), encoding="utf-8")
+
+    n_max = max(boards)
+    total_max = sum(totals[n_max].values(), Decimal(0))
+    n_priced = len(lines) - len(unmatched) - len(unpriced)
+    summary = f"{len(lines)} lines, {n_priced} priced; {n_max} units {money(total_max)}"
+    if unmatched or unpriced:
+        summary += f"; {len(unmatched)} not in the parts files, {len(unpriced)} not priced"
+    if short or stale:
+        summary += f"; {len(short)} short of stock, {len(stale)} prices to check again"
+    failed = unmatched or unpriced or (strict and (short or stale))
+    return Result(
+        "procure",
+        "fail" if failed else "pass",
+        summary,
+        {
+            "unmatched": unmatched,
+            "unpriced": unpriced,
+            "short": short,
+            "stale": stale,
+            "totals": {str(n): {s: f"{c:.2f}" for s, c in totals[n].items()} for n in boards},
+        },
+        [str(bom_csv), str(pdir / "parts.csv"), str(pdir / "parts.md")],
+    )
+
+
+def board_counts(value: str) -> tuple[int, ...]:
+    try:
+        counts = tuple(int(v) for v in value.split(",") if v.strip())
+    except ValueError:
+        counts = ()
+    if not counts or min(counts) < 1:
+        raise argparse.ArgumentTypeError(f"--boards takes counts like 1,10, not {value!r}")
+    return counts
+
+
+def cmd_procure(args) -> int:
+    project = find_project(args.project)
+    out = out_dir_for(project, args.out)
+    parts = [Path(p).resolve() for p in args.parts] if args.parts else []
+    if not parts and (project.dir / "parts.csv").is_file():
+        parts = [project.dir / "parts.csv"]
+    return emit([gate_procure(project, out, parts, args.boards, args.strict)], args, None)
+
+
 # --------------------------------------------------------------- commands
 
 
@@ -1006,6 +1372,18 @@ def main(argv: list[str] | None = None) -> int:
         "--spin-pivot",
         help="the GIF's pivot, x,y,z in cm from the board's centre (kicad-cli --pivot); z for tall parts",
     )
+    p = add_project_cmd(
+        "procure", "price the schematic's BOM from parts files; writes procure/bom.csv, parts.csv, parts.md"
+    )
+    p.add_argument(
+        "--parts",
+        action="append",
+        metavar="FILE",
+        help="a parts CSV (repeatable; the first row that matches a line wins); default <project>/parts.csv",
+    )
+    p.add_argument(
+        "--boards", type=board_counts, default="1,10", help="units to price, comma-separated (default 1,10)"
+    )
     p = sub.add_parser(
         "design", help="build a kicadgen design.py into a KiCad project; --route runs FreeRouting"
     )
@@ -1037,6 +1415,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "gates":
         return cmd_gates(args)
+    if args.command == "procure":
+        return cmd_procure(args)
     if args.command == "autoroute":
         return cmd_gate(
             args, gate_autoroute, dsn=args.dsn, passes=args.passes, threads=args.threads, timeout=args.timeout
