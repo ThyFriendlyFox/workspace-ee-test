@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 
 ## [Unreleased]
 ### Added
+- kistack (American Embedded's KiCad agent skills) vendored at `641ade9` in `third_party/kistack/`, without its logo; the `kistack` skill names which of its skills to read at which step and where this workcenter's rules override it (no getting round bot protection, the design file is the source of truth, FreeRouting routes, the gates decide done).
+- `workcenter placement <check> <board> [args]`: kistack's layout-placement checks (`pin_sides`, `placement_audit`, `route_check`, `local_search`, `group_search`) on a board file, headless. `tools/kistack_board.py` answers kistack's IPC reader from the file with pcbnew, since KiCad 10.0 has no headless API server. `move` is refused.
+- The venv gets shapely, numpy and pygerber (kistack's placement checks and Gerber review).
 - `kicadgen`: project symbol libraries (`Design.symbol_dirs`, a `sym-lib-table` in the generated project, `pins --lib NAME=FILE`), for a part the KiCad library lacks or draws only in several units, such as a dual common-drain MOSFET.
 - `workcenter procure <project> --parts FILE --boards 1,10`: prices the schematic's BOM from parts files and writes `procure/bom.csv`, `parts.csv` and `parts.md` with the cheapest order per line and totals per supplier; fails on a line with no part or no price, `--strict` also on a line short of stock or a price older than 90 days. The `procurement` skill and P25 say how a parts file is filled (M54, M55).
 - `kicadgen`: wired schematics (`Design.sch_wires`): a grid router (`SchRouter`) draws each net's wires round the parts, with junctions at tees, power symbols pointing away from their pins, and each net's name on its wire; `sch_rot` turns a symbol, `sch_label_nets` keeps labels for chosen nets, `sheet` picks the paper. Off by default, so existing schematics regenerate byte for byte (M51, P24).

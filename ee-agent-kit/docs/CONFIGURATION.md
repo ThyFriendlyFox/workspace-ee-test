@@ -29,6 +29,7 @@ unset variable never causes a failure.
 | `NGSPICE` | command | `ngspice` | The simulation engine. |
 | `JAVA` | command | `java` | Runs the JAR. |
 | `KICAD10_3DMODEL_DIR` | path | `/usr/share/kicad/3dmodels` | Where `render` looks for the library 3D bodies footprints name, to list the parts drawn without one (`KICAD9_` and `KICAD8_3DMODEL_DIR` likewise). |
+| `KISTACK_DIR` | path | `<checkout>/third_party/kistack` | The kistack copy whose `skills/layout-placement/scripts` `workcenter placement` runs. |
 
 | Flag | Commands | Default | Use |
 |---|---|---|---|
@@ -44,6 +45,7 @@ unset variable never causes a failure.
 | `--timeout S` | autoroute, design | `600` autoroute, `900` design | Kill the router after S seconds. |
 | `--route` | design | off | Export the DSN, run FreeRouting, merge the session before writing. |
 | `--rounds N` | design | `4` | Route again, up to N rounds, with a via reserved beside each pad a pour lost. |
+| `CHECK BOARD ARGS` | placement | none | `CHECK` is one of `pin_sides`, `placement_audit`, `route_check`, `local_search`, `group_search`; `BOARD` a project folder or `.kicad_pcb`; `ARGS` go to the check as kistack documents them (`U1`, `--ic U1`, `--track 0.15 --clear 0.1 --via 0.5 --edge 0.3` for a board with a `.kicad_dru`). |
 | `--width PX` | render | `1600` | Image width; the schematic PNG is twice that, the GIF's frames at most 640. |
 | `--views LIST` | render | `schematic,2d,3d,layers` | What to draw, comma-separated, from `schematic`, `2d`, `3d`, `layers`, `spin`, or `all`. `layers` writes `render/layers/<layer>.png` for each layer with something on it and `render/layers.png`; `spin` writes `render/board-spin.gif`. |
 | `--spin-frames N` | render | `36` | Frames in the turning GIF, 12 a second. |

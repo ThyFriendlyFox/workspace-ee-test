@@ -32,6 +32,7 @@ already defines.
 | Asked for a blog post / public write-up of recent work | `skills/blog-post/SKILL.md` | Devlog in, post out. Never publishes without a go-ahead. |
 | The session holds more than 1 repository, or a repository was added mid-session | `skills/attached-repos/SKILL.md` | Assign roles before the first edit. The board is the project; this repo is the workcenter and read-only. |
 | Changing what a project gets from this workcenter (a tool, gate, path, requirement) | `../WORKCENTER.md` | The contract. Same commit as the change. `WORKCENTER.template.md` is the blank for new workcenters. |
+| Placing parts, reviewing a schematic, layout or Gerbers, a part's derating, a footprint, a symbol, a panel | `../.claude/skills/kistack/SKILL.md` | Names the vendored kistack skill for the step (`third_party/kistack/`) and where this kit's rules win over it. |
 
 ## Precedence
 
