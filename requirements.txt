@@ -2,7 +2,7 @@
 # The `workcenter` CLI itself uses the standard library only.
 kicad-python==0.8.0
 pytest==9.1.1
-ruff==0.17.1
+ruff==0.17.2
 # kistack's layout-placement checks (`workcenter placement`), at kistack's own pins
 shapely==2.2.0
 numpy==2.5.4
