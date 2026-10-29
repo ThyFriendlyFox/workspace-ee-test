@@ -60,6 +60,13 @@ project and routes it with FreeRouting. No GUI at any step.
      point, or a pin whose first cell out is taken: move the part. Plot the
      sheet (`workcenter render . --views schematic`) and read it before the
      close-out.
+   - Pulls (P16 step 5): `d.check_pulls = True` makes `workcenter design`
+     fail on a control input that can float in reset: a gate, a logic
+     input, a switch or an I2C line that no output drives and no resistor
+     holds at a rail (or a gate at its own source). Every design prints these
+     as `pull:` lines. A net held elsewhere goes in `d.defined_nets` with the
+     reason: `{"BTN": "PB7's internal pull-up, set in firmware gpio.c"}`,
+     `{"I2C_SDA": "4.7k to 3V3 on the display board, R4"}`.
    - `d.net_classes` for heavy nets. The widest track that enters a pad is
      the pad pitch minus the pad width minus 2 x clearance: 0.6 mm for
      SOT-23 and 0603, 0.5 mm for 0402, 0.4 mm for TSSOP. Put the ADC sense

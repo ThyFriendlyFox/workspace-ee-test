@@ -342,10 +342,19 @@ When: choosing or changing which MCU pin carries which signal.
    mode at reset sees a voltage above VDD; multi-bonded pins (several
    ports on one package pin) keep the unused ones as inputs.
 4. Write the firmware's pin set-up from the same table and build it.
+5. Give every control input a level while the MCU is in reset: a gate, an
+   enable, a switch, an I2C line that only an MCU pin drives floats until
+   firmware sets that pin. Set `check_pulls = True` in the design file;
+   `workcenter design` then fails on each net with no output driving it and
+   no resistor to a rail (or, for a gate, to its own source). Add the pull,
+   or name the net in `defined_nets` with the reason: the datasheet line
+   for an internal pull and the firmware line that sets it, or the part on
+   the other board of a joint.
 
 Done when: the README's pin table names the function of every used pin,
-the shared-resource checks are written next to it, and the firmware that
-configures those pins compiles.
+the shared-resource checks are written next to it, the firmware that
+configures those pins compiles, and `workcenter design` reports no
+`pull:` line for a design with `check_pulls`.
 
 ## P17 — Copper the tools add
 

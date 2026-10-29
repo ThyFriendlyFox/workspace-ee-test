@@ -54,6 +54,7 @@ the skills tell the agent which gate comes next.
 
 | Week | Feature | Release | Evidence |
 |---|---|---|---|
+| 2026-10-29 | Pull-resistor check: `Design.undefined_inputs()`, `check_pulls`, `defined_nets` | unreleased | `tests/test_pulls.py`; Last Hit v0.11 checked; `DEVLOG.md` 2026-10-29 |
 | 2026-10-29 | Fabrication house rule sets: `rules/sierra-circuits-web.kicad_dru`, `workcenter drc|gates --fab`, `Design.fab` | unreleased | `tests/test_fab.py` (fixture `fail-fab-sierra` GREEN plain, red with the fab; the board-wide minimums; the project untouched); Last Hit v0.11 checked: 47 errors under Sierra's limits; `DEVLOG.md` 2026-10-29 |
 | 2026-10-29 | kistack vendored with the `kistack` skill; `workcenter placement` runs its placement checks headless | unreleased | `tests/test_placement.py`; `third_party/kistack/VENDORED.md`; `DEVLOG.md` 2026-10-29 |
 | 2026-10-27 | `workcenter procure` and the `procurement` skill: a schematic's BOM priced from a parts file, cheapest order per line, totals per supplier | unreleased | `tests/test_gates.py` (the fixture priced to the cent at 1 and 10 units; unmatched, unpriced and short-of-stock lines; the skip); the Last Hit parts lists; `DEVLOG.md` 2026-10-27 |
@@ -76,3 +77,4 @@ the skills tell the agent which gate comes next.
 - 2026-10-23 — item 1 re-scoped: the generated-design half shipped out of band while building the first board; the remaining half is a `.kicad_pcb` reader in front of the same DSN writer.
 - 2026-10-29 — kistack shipped out of band: the user asked for it in the workflow.
 - 2026-10-29 — item 3 (fab rule sets) re-scoped from JLCPCB to Sierra Circuits' Web PCB, the user's fab, and shipped; `Design.fab` added so a generated board carries its fab's rules for good. The MCP server moves up to 3.
+- 2026-10-29 — the pull-resistor check shipped out of band: the user asked for pull-downs wherever one is needed, in case one was missed.

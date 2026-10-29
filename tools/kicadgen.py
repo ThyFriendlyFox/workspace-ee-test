@@ -807,6 +807,12 @@ class Design:
     zones: list[dict] = field(default_factory=list)  # copper pours, see zone()
     keepouts: list[dict] = field(default_factory=list)  # areas no track or via enters, see keepout()
     islands: list[list[str]] = field(default_factory=list)  # pads cut off from their pour, set by write()
+    # Nets taken as held at a level though nothing on this board holds them, each with the reason: an
+    # internal pull in a datasheet, a pull on the other board of a joint (undefined_inputs()).
+    defined_nets: dict[str, str] = field(default_factory=dict)
+    # Fail `workcenter design` on a control input that can float (undefined_inputs()); off by default so
+    # boards made before the check regenerate as they were.
+    check_pulls: bool = False
     _symcache: dict[str, Symbol] = field(default_factory=dict, repr=False)
     _fpcache: dict[str, Footprint] = field(default_factory=dict, repr=False)
 
@@ -1314,6 +1320,86 @@ class Design:
                 if first:
                     return out
         return list(dict.fromkeys(out))  # a through pad appears once per layer; say it once
+
+    def undefined_inputs(self) -> list[str]:
+        """Control inputs that can float: every net with a logic or gate input, a switch, or an I2C line
+        (a pin or net named SDA or SCL) that no output drives and no resistor holds at a level.
+
+        The level is a resistor to a rail (a power net, ground, or a net a power pin sits on) or, for a
+        transistor's gate, to its own source. A pin of an MCU is bidirectional and is high-impedance in
+        reset and until firmware sets it, so it does not count as driving the net. A net the design names
+        in `defined_nets`, with the reason (an internal pull in a datasheet, a pull on the other board),
+        is taken as defined. Returns one line per net, empty when every input has a level."""
+        pins_on: dict[str, list[tuple[Part, Pin]]] = {}
+        for part in self.parts:
+            for number, net in part.nets.items():
+                try:
+                    pins_on.setdefault(net, []).append((part, part.symbol.pin(number)))
+                except KeyError:
+                    continue
+        rails = set(self.power_nets) | {
+            net
+            for net, pins in pins_on.items()
+            if re.fullmatch(r"GND\w*|VSS\w*|AGND\w*", net)
+            or any(pin.etype in ("power_in", "power_out") for _, pin in pins)
+        }
+
+        def resistor(part: Part) -> bool:
+            return part.symbol.lib_id.split(":")[-1].startswith("R") and len(part.nets) == 2
+
+        def held(net: str, pins: list[tuple[Part, Pin]]) -> bool:
+            gates = [p for p, pin in pins if pin.name.upper() == "G"]
+            for part, _ in pins:
+                if not resistor(part):
+                    continue
+                (other,) = [n for n in part.nets.values() if n != net] or [net]
+                if other in rails:
+                    return True
+                # a gate pulled to its own transistor's source
+                if any(src == other for q in gates for src in self._pins_named(q, "S")):
+                    return True
+            return False
+
+        out = []
+        for net, pins in sorted(pins_on.items()):
+            if net in rails or net in self.defined_nets:
+                continue
+            if any(pin.etype in ("output", "power_out") for _, pin in pins):
+                continue
+            what = [
+                f"{p.ref}.{pin.number} ({pin.name or 'pin'}, input)"
+                for p, pin in pins
+                if pin.etype == "input"
+            ]
+            what += [f"{p.ref} (switch)" for p, _ in pins if p.symbol.lib_id.startswith("Switch:")]
+            i2c = re.search(r"\b(SDA|SCL)\b", net.upper().replace("_", " ")) or any(
+                pin.name.upper() in ("SDA", "SCL") for _, pin in pins
+            )
+            if i2c:
+                what.append("an I2C line")
+            if not what or held(net, pins):
+                continue
+            drivers = [
+                f"{p.ref}.{pin.number}" for p, pin in pins if pin.etype in ("bidirectional", "tri_state")
+            ]
+            by = f", driven only by {', '.join(drivers)} (high-impedance in reset)" if drivers else ""
+            out.append(
+                f"{net}: {', '.join(dict.fromkeys(what))}{by}, and no resistor to a rail holds it: add a pull, or"
+                " name the net in defined_nets with the reason"
+            )
+        return out
+
+    @staticmethod
+    def _pins_named(part: Part, name: str) -> list[str]:
+        """The nets on `part`'s pins named `name`."""
+        out = []
+        for number, net in part.nets.items():
+            try:
+                if part.symbol.pin(number).name.upper() == name:
+                    out.append(net)
+            except KeyError:
+                continue
+        return out
 
     def check_vias(self) -> list[str]:
         """Every via on the design that breaks a clearance, a keepout or the board edge, with what it

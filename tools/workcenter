@@ -1183,6 +1183,11 @@ def cmd_design(args) -> int:
     # each hand via's place, since a via passes every layer, and one in a keepout or on another face's
     # pad is a short the DRC would only find later (M40, M41).
     summary["via_problems"] = design.check_via_rules() + design.check_vias()
+    # Control inputs that can float (a gate, an enable, a switch, an I2C line with nothing holding it):
+    # listed for every design, and a failure for one that sets check_pulls.
+    summary["pulls"] = design.undefined_inputs()
+    if summary["pulls"] and design.check_pulls:
+        code = EXIT_FAIL
     if summary["via_problems"]:
         code = EXIT_FAIL
     if args.route:
@@ -1224,6 +1229,8 @@ def cmd_design(args) -> int:
             unrouted = "DRC decides" if r["unrouted"] is None else f"{r['unrouted']} unrouted"
             rounds = f"{summary.get('rounds', 1)} round(s)"
             print(f"  routed: {r['segments']} segments, {r['vias']} vias, {unrouted}, {rounds}  ({r['log']})")
+        for line in summary["pulls"]:
+            print(f"  pull: {line}")
         for problem in summary["via_problems"]:
             print(f"  via: {problem}")
         for island in summary["islands"]:
