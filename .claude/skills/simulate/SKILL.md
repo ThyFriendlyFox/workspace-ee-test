@@ -52,6 +52,30 @@ A circuit meets its spec when every bound holds.
    Read `build/sim/<deck>.log`; the line number in the message points at
    the deck.
 
+## A vendor's model
+
+A part with a published model is simulated with that model, kept in the
+project's `library/` and listed in `library/sources.csv` (`PROCESSES.md`
+P27; `workcenter sources` checks the rows).
+
+1. Include it by its library path from the deck, as the vendor ships it:
+   `.include "../../library/ti/TLV75533P_TRANS.lib"`. The gate runs the deck
+   from `build/sim/run/<deck>/` with the model translated where its row's
+   `Ngspice` column says (`ps`, `res-model`, `tolerance`); never edit the
+   vendor's file.
+2. Check the model before trusting it: drive it at its datasheet's own
+   test conditions and print each electrical-table value, and bound each
+   in the expect file with the table's min and max and a `"warn"` naming
+   the row: `{"min": 0.975, "max": 1.025, "warn": "the model against its
+   datasheet: IOUT at VSENSE 100 mV"}`. A warn bound outside is reported,
+   and fails only `--strict`; a bound without `warn` is the design's.
+3. Then drive it as the board does (the board's parts, its load, its
+   supply's range) with bounds from the design: a firmware constant, the
+   next part's operating range.
+4. Where a model is off its datasheet, the datasheet governs: say so in
+   the version's README with both values, and keep the warn bound so the
+   next model revision shows whether it was fixed.
+
 ## Checks
 
 - Every bound in an expect file traces to a line in the spec or the

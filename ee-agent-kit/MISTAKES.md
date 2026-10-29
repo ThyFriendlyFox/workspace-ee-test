@@ -385,3 +385,15 @@ What happened: PR #30 put Sierra Circuits' limits into `rules/sierra-circuits-we
 Cost: v0.12 regenerated and rerouted where the via sat, its pictures redrawn; the fix, a test that a net class's clearance survives the fab, a test that the via check follows the net classes, and the docs of the rule sets.
 Root cause: a fab's minimum was written as a rule without checking how KiCad combines a custom rule with the board's own rules; it replaces them, and PR #30's tests only checked that the fab's limits fail a board, never that the board's own still do. The via check had its own notion of clearance instead of the DRC's.
 Process: P3
+
+## M63 — 2026-10-29 — A display taken for a diode
+What happened: the new `workcenter sources` asked a spice row of every part whose reference starts with U, Q or D, and read only the first letter, so the Last Hit's v0.12 display board failed on DS1, the OLED panel, for having no SPICE model. It came out on the first run against a real board, before the command was merged.
+Cost: one run; the check, a test of every prefix kind, P27 step 5.
+Root cause: the reference prefix was cut to one letter where KiCad's prefixes have one or more (D, DS, SW, TP), and the tests' fixture board had no part with a longer prefix that starts like a simulated one.
+Process: P27
+
+## M64 — 2026-10-29 — A new command without its configuration rows
+What happened: `workcenter sources` went in with `--sources` and `--fetch` and no rows in `docs/CONFIGURATION.md`, its `--help` silent on what it writes, and no test of its skip or its error exit, all of which P10 asks for. `make verify`'s flag test failed the branch before a PR was opened.
+Cost: one verify run; the rows, the help text, a test of each exit code and assertions on each file the command and the SIM gate write.
+Root cause: P10 was not read before the command line changed, the same root as M50; its check caught the flags, and nothing checks the help text or the exit codes.
+Process: P10

@@ -34,9 +34,11 @@ unset variable never causes a failure.
 | Flag | Commands | Default | Use |
 |---|---|---|---|
 | `--json` | all | off | Machine-readable output. |
-| `--out DIR` | gates, erc, drc, sim, export, autoroute, render, procure; design | `<project>/build`; design: the design file's folder | Where reports and artifacts go; for design, where the KiCad project is written. |
-| `--strict` | gates, erc, drc, sim, export, render, procure | off | Warnings fail the gate; for render, a part the 3D views draw without a body fails it; for procure, a line short of stock or a price older than 90 days. |
-| `--parts FILE` | procure | `<project>/parts.csv` | A parts CSV, repeatable; the first row whose Value and Footprint match a BOM line prices it, and every row with no Footprint is an item off the board. Columns in the `procurement` skill. |
+| `--out DIR` | gates, erc, drc, sim, export, autoroute, render, procure, sources; design | `<project>/build`; design: the design file's folder | Where reports and artifacts go; for design, where the KiCad project is written. |
+| `--strict` | gates, erc, drc, sim, export, render, procure, sources | off | Warnings fail the gate; for render, a part the 3D views draw without a body fails it; for procure, a line short of stock or a price older than 90 days; for sim, a model outside a `warn` bound (its datasheet); for sources, a datasheet kept as a note only, a file with no SHA256 or revision recorded, a model older than its datasheet, or a load check skipped. |
+| `--parts FILE` | procure, sources | `<project>/parts.csv` | A parts CSV, repeatable; the first row whose Value and Footprint match a BOM line prices it (procure) or names its MPN (sources), and every row with no Footprint is an item off the board. Columns in the `procurement` skill. |
+| `--sources FILE` | sources | the nearest `library/sources.csv` at or above the project | The library's manifest: one row per datasheet, SPICE model or STEP file, the files beside it (`WORKCENTER.md`, "Project requirements"). The SIM gate finds it the same way. |
+| `--fetch` | sources | off | Read each row's URL once more under the workcenter's own user agent into `<out>/sources/fetched/` and report each as same, changed, new, refused, gone or unreachable; a refusal is never retried. The library is not written. |
 | `--boards LIST` | procure | `1,10` | Units to price, comma-separated; each gets its cheapest order and totals per supplier. |
 | `--step` | gates, export | off | Also export a STEP model. |
 | `--fab NAME` | gates, drc | none | Also check a fab's limits: a rule set in `rules/` (`sierra-circuits-web`) or a `.kicad_dru` path, laid over the project's own rules on a copy in `<out>/fab-<name>/`. A design file's `fab` field does the same for good (`rules/README.md`). |

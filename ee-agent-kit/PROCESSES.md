@@ -612,3 +612,38 @@ a button gesture, a port, a mode, a firmware update.
 
 Done when: the version's README gives the user's steps, each hand-over's
 entry conditions cite their source, and a host test runs the steps.
+
+## P27 — A part's datasheet, SPICE model and 3D model
+
+When: a part enters a BOM, a simulation uses a vendor's model, or a 3D body
+comes from a vendor.
+
+1. Every part on the schematic gets rows in the project's
+   `library/sources.csv`: a datasheet for each, a spice row for each U, Q
+   and D (a model file, or a note saying why there is none), a step row
+   where the vendor publishes a body. Fetch the sanctioned way (P25 step 1):
+   `workcenter sources --fetch` asks once under its own name and records a
+   refusal; a file no site will serve is left for the user to download, and
+   its row's note says so and from where.
+2. Keep each file as the vendor publishes it, its notice intact; a model
+   that ngspice reads differently is translated into a copy in `build/`,
+   never in the library. The row records what the file itself prints: the
+   revision string as printed, its date, its SHA256, the day it was checked;
+   a model's row also its `.SUBCKT` and the fixes ngspice needs (`ps`,
+   `res-model`, `tolerance`).
+3. A model older than its datasheet: read the datasheet's revision history
+   for every change after the model's date (curves, a new manufacturing
+   flow, a changed limit) and write down what it touches.
+4. Before a model serves a design deck, run it at its datasheet's own test
+   conditions in a deck whose expect file holds each table row's min and
+   max as a `warn` bound. A model off its datasheet is named in the
+   version's README with the datasheet value the design trusts there, and
+   the design's own bounds come from the design (the firmware's constants,
+   the parts' operating ranges), never from the model's first result.
+5. A reference's whole letter prefix says what it is: D1 is a diode, DS1 a
+   display, and a check that reads one letter takes one for the other (M63).
+
+Done when: `workcenter sources` passes for every board of the version, each
+model a deck uses has its datasheet rows as `warn` bounds, and the README
+names each model that is off its datasheet and what the design trusts
+instead.
