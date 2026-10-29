@@ -419,9 +419,18 @@ switch) or changing its rating.
    fuse ratings, thermal budget, pull values that assume its thresholds.
 2. Recompute each from the new part's datasheet and write the value and
    the rating it comes from in the project README's BOM or decisions.
+3. List what the old part did besides its ratings: protection it carried
+   (a cell's protection circuit, a fuse, a thermistor), how it was held,
+   and how it was connected (a plug, tabs, a holder). For each, read the
+   new part's datasheet or listing: either it does the same, or the job
+   moves to the board or the assembly with a part chosen for it, in this
+   change (M56). A pad for a part not yet chosen is an open item in the
+   README, never a contact, and the README never claims a function no
+   chosen part performs.
 
 Done when: every value on the list cites the new part's rating in the
-README.
+README, and every function on the step 3 list names the part that does
+it now.
 
 ## P21 — Moving files in a project
 

@@ -327,8 +327,8 @@ Root cause: nothing compared the bodies the footprints name with the files on di
 Process: P23
 
 ## M53 — 2026-10-27 — `cd` again, in a session with two repositories
-What happened: two commands started with `cd` while the generator was being tested. The no-cd hook does not load in a session with two repositories, and P8 was not read again. Nothing ran in the wrong place. Later in the same session a third one did, listing the board repo's parts files: a loop over absolute paths with a `cd` left in front of it from an earlier draft of the command.
-Cost: none this time; the third left the shell in the parts folder for one command.
+What happened: two commands started with `cd` while the generator was being tested. The no-cd hook does not load in a session with two repositories, and P8 was not read again. Nothing ran in the wrong place. Later in the same session a third one did, listing the board repo's parts files: a loop over absolute paths with a `cd` left in front of it from an earlier draft of the command. A fourth, the next day, put `cd` into the workcenter before reading a footprint with an absolute path that needed no `cd` at all.
+Cost: none this time; the third and fourth each left the shell in another folder until the session restarted, and every later command had to carry absolute paths and `git -C`.
 Root cause: habit, with the hook that refuses it absent in this kind of session; installing it user-wide is the user's decision.
 Process: P8
 
@@ -343,3 +343,9 @@ What happened: `curl` to a Digi-Key product page got 403 from its bot protection
 Cost: one refused command.
 Root cause: a 403 read as an obstacle to get round instead of the site's answer.
 Process: P25
+
+## M56 — 2026-10-28 — A cell swapped in without what the old one carried
+What happened: the Last Hit's v0.6 replaced a 500 mAh pouch, which came with a protection circuit and a JST plug, with a bare 10440 cell. The new cell got values recomputed (charge current, cut-offs) but nothing took over the pouch's other two jobs. The README went on saying "battery protection is in the cell pack" while the cell it names, Vapcell's 10440, is sold unprotected; and the cell's contacts stayed a 2 mm pad for a spring nobody chose and a lead nobody drew. The user found both from the pictures: the cell floated over the board, joined to nothing. Five versions, v0.6 to v0.10, carried it.
+Cost: v0.11 to add a protection circuit (BQ29700 and FDMB2307NZ), tab pads and a welded-tab cell; five archived versions whose notes are wrong about protection.
+Root cause: P20 asked for every value taken from the old part's ratings and nothing about what the old part did: its protection and its connection left with it unnoticed.
+Process: P20
