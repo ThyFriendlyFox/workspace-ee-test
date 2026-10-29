@@ -42,6 +42,14 @@ session (`.ses`). There are 2 ways in:
    Do not lower clearances. A connection a person can see but the router
    does not find is drawn by hand in the design file (`d.track`, `d.via`;
    see `board-design`); the router keeps it and routes around it.
+   FreeRouting's result is deterministic for one input but shifts with
+   every hand track added, even one far from the nets it then drops: on
+   Last Hit v0.11 a +BATT run along the front edge left the button, a VBUS
+   link and a 3.3 V link unrouted on the other side of the board. Find the
+   culprit by routing a scratch copy with the new hand copper removed (or
+   cut down to its via), and when one run routes a net the next one drops,
+   copy that run's tracks for it into the design file. Then route again:
+   a run is kept only when the gates are GREEN on it.
 4. `workcenter gates .` must be GREEN before the board is called routed.
 
 ## Steps, hand-drawn board

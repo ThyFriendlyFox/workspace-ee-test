@@ -48,6 +48,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `docs/CONFIGURATION.md` names the FreeRouting pin that `install.sh` has carried since the 1.9.0 pin (M21).
 - `ee-agent-kit/MISTAKES.md` (every mistake, its cost, its process) and `ee-agent-kit/PROCESSES.md` (binding checklists P1 to P21); `make verify` checks that each mistake names an existing process and each process has a "Done when" line.
 ### Changed
+- `autoroute` skill: FreeRouting's result shifts with every hand track added, even far from the nets it then drops; find the culprit on a scratch copy and copy a routing run's own tracks for a net the next run drops (Last Hit v0.11).
+- M53 records a sixth `cd`.
 - `PROCESSES.md` P20 (swapping a part) step 3: list what the old part did besides its ratings (protection, how it was held and connected) and name the part that does each now (M56).
 - `install.sh` prints apt progress and runs it non-interactively; the KiCad download from the PPA is slow on GitHub runners and a silent step was cancelled as hung.
 - `workcenter render` leaves the fabrication layer out of the 2D top image.
