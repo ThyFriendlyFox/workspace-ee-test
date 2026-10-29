@@ -3,12 +3,21 @@
 Each file is one fab's published limits as KiCad design rules (`.kicad_dru`, KiCad's own format), with
 the page and the words each rule comes from. A project uses one in two ways:
 
-- **For good:** set `fab = "<name>"` in the design file (`kicadgen.Design.fab`). `workcenter design`
-  copies the file into the project as `<name>.kicad_dru`, which KiCad's DRC, and so `workcenter gates`,
-  reads with the project; the board's own minimums (`board_rules()`) rise to the fab's where they were
-  looser, so the via check before routing (M46) refuses a via the fab would.
-- **Once:** `workcenter drc --fab <name> <project>` or `workcenter gates --fab <name> <project>` lays the
-  file over the project's own rules for that run, on a copy; nothing in the project changes.
+- **For good:** set `fab = "<name>"` in the design file (`kicadgen.Design.fab`). The board's own
+  minimums (`board_rules()`) rise to the fab's board-wide limits where they were looser, so the via
+  check before routing (M46) refuses a via the fab would. `workcenter design` copies the file's layer
+  and condition rules into the project as `<name>.kicad_dru`, which KiCad's DRC, and so
+  `workcenter gates`, reads with the project.
+- **Once:** `workcenter drc --fab <name> <project>` or `workcenter gates --fab <name> <project>` does the
+  same on a copy for that run: the copy's minimums raised, the layer and condition rules after the
+  project's own. Nothing in the project changes.
+
+A fab's limits only add floors. In KiCad's DRC a custom rule overrides the board's own constraints and
+every net class's, so a board-wide rule here (no layer, no condition) would put a 0.2 mm net class
+clearance down to the fab's 4 mil, and a stricter board minimum (a 0.25 mm hole) down to the fab's. The
+workcenter therefore never copies a board-wide rule into a project: it carries it as the board's own
+minimum, and raises each rule it keeps to the board's own setting where that is stricter
+(`kicadgen.fab_project_rules`; M62).
 
 `<name>` is a file name here without `.kicad_dru`, or a path to any `.kicad_dru`.
 

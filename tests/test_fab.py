@@ -49,7 +49,10 @@ def test_fixture_is_green_without_the_fab_and_red_with_it(tmp_path):
     assert drc["status"] == "fail" and drc["details"]["fab"] == SIERRA
     assert {"annular_width", "text_thickness"} <= drc_types(tmp_path / "fab")
     rules = {v["description"] for v in drc["details"]["first"]}
-    assert any("sierra-web: annular ring 6 mil" in r for r in rules), rules
+    # the ring is a board-wide limit, so the copy's own minimum carries it (M62); the legend rule has
+    # a condition and stays a rule
+    assert any("board setup constraints min annular width 0.1524 mm" in r for r in rules), rules
+    assert any("sierra-web: legend text stroke 5 mil" in r for r in rules), rules
 
 
 @needs_kicad
@@ -105,6 +108,64 @@ def test_design_fab_writes_the_rule_file_into_the_project(tmp_path):
     plain.outline = (100.0, 100.0, 110.0, 110.0)
     plain.write(tmp_path)
     assert not (tmp_path / "p.kicad_dru").exists()
+
+
+def test_the_project_rule_file_never_loosens_the_boards_own_rules():
+    text = kicadgen.fab_rules(SIERRA).read_text(encoding="utf-8")
+    kept = kicadgen.fab_project_rules(text, {"min_hole_clearance": 0.25, "min_text_thickness": 0.1})
+    # a board-wide rule would override every net class's clearance with the fab's 4 mil (M62)
+    assert "(constraint clearance" not in kept and "(constraint track_width" not in kept
+    assert "(constraint annular_width" not in kept and "(constraint hole_size" not in kept
+    assert "is board-wide: carried as the board's own minimum (min_clearance 0.1016 mm)" in kept
+    assert "(constraint hole_clearance (min 0.3302mm))" in kept  # the fab's is the stricter
+    assert "(constraint text_thickness (min 0.127mm))" in kept
+    stricter = kicadgen.fab_project_rules(text, {"min_hole_clearance": 0.4, "min_text_thickness": 0.13})
+    assert "(constraint hole_clearance (min 0.4mm))" in stricter  # the board's own is the stricter
+    assert "(constraint text_thickness (min 0.13mm))" in stricter
+
+
+def narrow_pair(name: str, n: int, fab: str = "") -> kicadgen.Design:
+    """Net A in a class with 0.3 mm clearance, and net B's track 0.25 mm beside it: wide enough for the
+    board's 0.2 mm and the fab's 4 mil, too narrow for the class."""
+    d = kicadgen.Design(name=name, namespace=uuid.UUID(int=n), outline=(100.0, 100.0, 112.0, 110.0), fab=fab)
+    d.add(
+        "R1",
+        "Device:R",
+        "10k",
+        "Resistor_SMD:R_0603_1608Metric",
+        sch_at=(50.8, 50.8),
+        pcb_at=(103.0, 103.0),
+        nets={"1": "A", "2": "B"},
+    )
+    d.net_classes = {"Wide": {"width": 0.2, "clearance": 0.3, "via": 0.6, "via_drill": 0.3, "nets": ["A"]}}
+    d.track("A", [(102.225, 103.0), (102.225, 108.0)], "F.Cu", width=0.2)
+    d.track("B", [(103.775, 103.0), (103.775, 106.0), (102.675, 106.0), (102.675, 108.0)], "F.Cu", width=0.2)
+    return d
+
+
+def class_clearances(out: Path) -> list[str]:
+    data = json.loads((out / "drc.json").read_text(encoding="utf-8"))
+    return [v["description"] for v in data["violations"] if v["type"] == "clearance"]
+
+
+@needs_kicad
+def test_a_net_class_clearance_holds_under_the_fab(tmp_path):
+    """A fab rule file must add the fab's floors, never replace the board's own rules: under the
+    Sierra rules a 0.25 mm gap next to a 0.3 mm net class is still a clearance error (M62)."""
+    plain = tmp_path / "plain"
+    narrow_pair("nc", 62).write(plain)
+    run("drc", plain, "--out", plain / "build")
+    assert any("clearance 0.3000 mm" in d for d in class_clearances(plain / "build"))
+
+    with_fab = tmp_path / "fab"
+    narrow_pair("nc", 62, fab=SIERRA).write(with_fab)
+    assert "(constraint clearance" not in (with_fab / "nc.kicad_dru").read_text(encoding="utf-8")
+    run("drc", with_fab, "--out", with_fab / "build")
+    assert any("clearance 0.3000 mm" in d for d in class_clearances(with_fab / "build"))
+
+    code, records = run("drc", plain, "--fab", SIERRA, "--out", tmp_path / "once")
+    assert code == 1 and records[0]["details"]["fab"] == SIERRA
+    assert any("clearance 0.3000 mm" in d for d in class_clearances(tmp_path / "once"))
 
 
 def test_an_unknown_design_fab_is_refused():

@@ -677,6 +677,53 @@ def fab_minimums(text: str) -> dict[str, float]:
     return out
 
 
+# A rule's constraint and the board setting that carries the same minimum, for raising a fab rule
+# that stays in the rule file (one with a layer or a condition) to the board's own where that is
+# stricter.
+RULE_BOARD_KEYS = {
+    **FAB_BOARD_RULES,
+    "text_thickness": "min_text_thickness",
+    "text_height": "min_text_height",
+}
+
+
+def fab_project_rules(text: str, board: dict[str, float]) -> str:
+    """A fab's .kicad_dru as a project carries it. In KiCad a custom rule overrides the board's own
+    constraints and every net class's: a board-wide rule (no layer, no condition) would put each net
+    class's clearance down to the fab's floor and loosen a stricter board minimum (M62). So the
+    board-wide rules are dropped here, since board_rules() raises the board's own minimums to them,
+    and each rule kept has its minimum raised to the board's own setting where that is stricter."""
+
+    def raised(m: re.Match) -> str:
+        key = RULE_BOARD_KEYS.get(m.group(1))
+        value = max(float(m.group(2)), float(board.get(key, 0.0))) if key else float(m.group(2))
+        return f"(constraint {m.group(1)} (min {value:g}mm))"
+
+    out, i = [], 0
+    for start in (m.start() for m in re.finditer(r"(?m)^\(rule\b", text)):
+        if start < i:
+            continue
+        out.append(text[i:start])
+        depth, end = 0, start
+        for end in range(start, len(text)):  # the rule's closing parenthesis
+            depth += {"(": 1, ")": -1}.get(text[end], 0)
+            if depth == 0:
+                break
+        rule = text[start : end + 1]
+        if "(layer" in rule or "(condition" in rule:
+            out.append(_DRU_MIN.sub(raised, rule))
+        else:
+            name = re.match(r'\(rule\s+"([^"]*)"', rule)
+            mins = ", ".join(f"{FAB_BOARD_RULES.get(k, k)} {v} mm" for k, v in _DRU_MIN.findall(rule))
+            out.append(
+                f'# "{name.group(1) if name else "?"}" is board-wide: carried as the board\'s own minimum '
+                f"({mins}), where it cannot override a net class."
+            )
+        i = end + 1
+    out.append(text[i:])
+    return "".join(out)
+
+
 def _inside_polygon(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
     """Even-odd point-in-polygon test."""
     inside = False
@@ -1282,7 +1329,13 @@ class Design:
             out.append(f"in keepout {name!r}")
             if first:
                 return out
-        c = self.clearance
+        # The clearance between two nets is the larger of their net classes', as in KiCad's DRC; a hair
+        # under it is the floating point, since the DRC measures in whole nanometres.
+        mine = self.class_of(pcb_net)["clearance"]
+
+        def clear(other: str) -> float:
+            return max(mine, self.class_of(other)["clearance"]) - 1e-6
+
         for pad in boxes:
             dx = max(pad.x1 - vx, 0.0, vx - pad.x2)
             dy = max(pad.y1 - vy, 0.0, vy - pad.y2)
@@ -1302,20 +1355,20 @@ class Design:
                 < drill / 2 + pad.drill / 2 + 0.25
             ):
                 out.append(f"hole to hole with {pad.ref}.{pad.number}")
-            elif pad.net != pcb_net and gap < r + c:
+            elif pad.net != pcb_net and gap < r + clear(pad.net):
                 out.append(f"on {pad.ref}.{pad.number} ({pad.net or 'no net'}, {pad.layer})")
             if first and out:
                 return out
         for i, (net, (ox, oy), size, odrill) in enumerate(self.vias):
             if i == skip_via:
                 continue
-            copper = r + size / 2 + c if (net != pcb_net or same_net_vias) else 0.0
+            copper = r + size / 2 + clear(net) if (net != pcb_net or same_net_vias) else 0.0
             if math.hypot(ox - vx, oy - vy) < max(copper, drill / 2 + odrill / 2 + 0.25):
                 out.append(f"on the {net} via at ({fmt(ox)}, {fmt(oy)})")
                 if first:
                     return out
         for n, (sx, sy), (ex, ey), w, layer in self.segments:
-            if tracks and n != pcb_net and _seg_dist((vx, vy), (sx, sy), (ex, ey)) < r + w / 2 + c:
+            if tracks and n != pcb_net and _seg_dist((vx, vy), (sx, sy), (ex, ey)) < r + w / 2 + clear(n):
                 out.append(f"on a {n} track ({layer})")
                 if first:
                     return out
@@ -3020,10 +3073,11 @@ class Design:
         }
         if self.fab:
             # KiCad reads <name>.kicad_dru beside the project: its DRC, and so the gates, check the fab's
-            # limits with the board's own.
+            # layer and condition rules with the board's own; the fab's board-wide limits are already
+            # the board's own minimums (board_rules), where they cannot override a net class (M62).
             src = fab_rules(self.fab)
             files[out_dir / f"{self.name}.kicad_dru"] = (
-                src.read_text(encoding="utf-8").rstrip("\n")
+                fab_project_rules(src.read_text(encoding="utf-8"), self.board_rules()).rstrip("\n")
                 + f"\n\n# Copied by the workcenter from {src.name} (Design.fab); edit the source, not this file.\n"
             )
         for p, text in files.items():

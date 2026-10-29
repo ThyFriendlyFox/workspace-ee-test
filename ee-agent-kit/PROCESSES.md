@@ -95,6 +95,14 @@ classes.
    sizes (`Design.check_via_rules()`) and exits 1 before routing. A
    smaller via needs the fab's limit in the README and `d.rules` set to it
    (M46).
+6. A rule file only adds floors. In KiCad a custom rule in a `.kicad_dru`
+   overrides the board's own constraints and every net class's, so a
+   rule with no layer and no condition replaces them all, looser or not.
+   A fab's board-wide limit goes into the board's minimums
+   (`Design.board_rules()`), never into the rule file; a rule that stays
+   is at least as strict as the board setting it shadows. To prove it,
+   take the rule file away from a copy of the board and run its DRC: no
+   new error may appear (M62).
 
 Done when: ERC 0/0 and DRC shows only unconnected items before the first
 route, `workcenter design` reports no via problem, and the via-free areas

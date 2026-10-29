@@ -57,7 +57,11 @@ Sierra Circuits' Web PCB: 4 mil trace and gap, 6 mil hole and ring, 13 mil
 inner drill to copper, 5 mil legend). A design file's `fab = "<name>"`
 writes the set into the project for good; `workcenter drc|gates --fab
 <name> <project>` checks any project against one once, on a copy
-(`rules/README.md` says what each set cannot check).
+(`rules/README.md` says what each set cannot check). A fab's limits only
+add floors: its board-wide limits raise the board's own minimums, and only
+its layer and condition rules go into the project's `.kicad_dru`, raised to
+the board's own where those are stricter. A board-wide custom rule would
+override every net class's clearance in KiCad's DRC.
 
 Not a gate, but part of every hand-off: `workcenter render <project>` writes
 the schematic, board top and bottom, and 3D images into `build/render/`, and

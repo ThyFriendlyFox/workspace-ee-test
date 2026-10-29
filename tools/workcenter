@@ -232,8 +232,10 @@ def gate_erc(project: Project, out: Path, strict: bool = False) -> Result:
 
 
 def fab_copy(project: Project, fab: str, out: Path) -> Path:
-    """A copy of the project's board, schematics and project file in `out`/fab-<name>/, with the fab's
-    rules laid over the project's own .kicad_dru (rules/README.md). Returns the copied board."""
+    """A copy of the project's board, schematics and project file in `out`/fab-<name>/ with the fab's
+    limits on it (rules/README.md): its board-wide limits raise the copy's own minimums in the
+    project file, and its layer and condition rules follow the project's own .kicad_dru. A board-wide
+    custom rule would override every net class's clearance (M62). Returns the copied board."""
     sys.path.insert(0, str(SRC_DIR / "tools"))
     import kicadgen
 
@@ -245,12 +247,21 @@ def fab_copy(project: Project, fab: str, out: Path) -> Path:
     for f in project.dir.iterdir():
         if f.suffix in (".kicad_pcb", ".kicad_pro", ".kicad_sch"):
             shutil.copy2(f, work / f.name)
+    fab_text = src.read_text(encoding="utf-8")
+    board: dict[str, float] = {}
+    pro = work / f"{project.name}.kicad_pro"
+    if pro.is_file():
+        data = load_json(pro)
+        board = data.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
+        for key, value in kicadgen.fab_minimums(fab_text).items():
+            board[key] = max(float(board.get(key, 0.0) or 0.0), value)
+        pro.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     own = project.dir / f"{project.name}.kicad_dru"
     rules = own.read_text(encoding="utf-8").rstrip("\n") + "\n\n" if own.is_file() else "(version 1)\n"
     # One version line per file; the fab's rules follow the project's, so a later rule of the same
     # kind (the fab's) is the one KiCad reports.
-    fab_text = re.sub(r"^\(version \d+\)\s*", "", src.read_text(encoding="utf-8"))
-    (work / f"{project.name}.kicad_dru").write_text(rules + fab_text, encoding="utf-8")
+    fab_rules = re.sub(r"^\(version \d+\)\s*", "", kicadgen.fab_project_rules(fab_text, board))
+    (work / f"{project.name}.kicad_dru").write_text(rules + fab_rules, encoding="utf-8")
     return work / project.pcb.name
 
 
