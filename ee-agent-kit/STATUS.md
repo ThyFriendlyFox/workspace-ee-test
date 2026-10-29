@@ -15,6 +15,7 @@ behavior change. The weekly cycle (WEEKLY.md step 5) refreshes it.
 | `workcenter procure` | ✅ | A schematic's BOM priced from parts files: the cheapest order per line at each unit count, totals per supplier, lines not priced, short of stock or checked too long ago. `tests/test_gates.py`: the fixture priced to the cent, the failures and the skip. |
 | Skills | ✅ | 8 skills with frontmatter, checked by `make verify`; `kistack` routes to 11 vendored kistack skills. |
 | `workcenter placement` (kistack) | ✅ | `tests/test_placement.py` (6 tests): kistack's checks on its own synthetic board read through the pcbnew stand-in, with the answers kistack's tests expect (pin 1 VDD, a decoupler with its ground pad toward the pin, every local link routed together); `move` and unknown checks refused. |
+| Fab rule sets | ✅ | `rules/sierra-circuits-web.kicad_dru` with its sources; `tests/test_fab.py` (7 tests): the fixture `fail-fab-sierra` GREEN plain and red with `--fab`, the passing divider within Sierra's limits and left untouched, an unknown fab refused, the board-wide minimums, `Design.fab` writing the rules and refusing a 0.6/0.3 mm via. |
 | Mistake log and processes | ✅ | `MISTAKES.md` M1 to M56, `PROCESSES.md` P1 to P25; `make verify` checks every entry names an existing process and every process has a "Done when" line. |
 | Cloud environment | 🚧 | `environment/setup.sh` written; not yet set on an environment by a human. |
 | Docker image | 🚧 | `Dockerfile` written; `release.yml` builds it on the first tag. |

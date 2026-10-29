@@ -41,6 +41,24 @@ Evidence: <commit / tag / gate run / screenshot>
 
 <!-- Entries below, newest first. -->
 
+## 2026-10-29 — The fab's own limits in the DRC
+
+The user asked for a DRC that says whether a board can be made, and chose
+Sierra Circuits as the fab. KiCad's DRC already ran on every board, but
+against the workcenter's own rules, which nobody had compared with what a
+fab publishes. Sierra's Web PCB order page gives the numbers: 4 mil trace and
+gap, 6 mil holes and rings, 13 mil from a hole to inner-layer copper, 5 mil
+legend lines. They now live in `rules/` as a KiCad rule file, each rule with
+the words it came from, and a board can carry them for good (its design
+file names the fab) or be checked against them once (`--fab`). Last Hit
+v0.11, GREEN on the workcenter's rules, fails 47 of Sierra's: every via's
+ring is 0.150 mm against 0.152, its labels are stroked 0.10 mm against
+0.127, and inner copper comes within 0.25 mm of the receptacle's plastic
+pegs. All three are cheap to fix in the next version; none would have shown
+up before the fab's review.
+
+Evidence: `make verify` green on the branch; `tests/test_fab.py`.
+
 ## 2026-10-29 — kistack joins the workcenter
 
 The user asked for kistack in the workflow. It is a set of agent skills for

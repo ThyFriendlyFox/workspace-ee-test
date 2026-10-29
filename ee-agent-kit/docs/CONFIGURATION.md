@@ -39,6 +39,7 @@ unset variable never causes a failure.
 | `--parts FILE` | procure | `<project>/parts.csv` | A parts CSV, repeatable; the first row whose Value and Footprint match a BOM line prices it, and every row with no Footprint is an item off the board. Columns in the `procurement` skill. |
 | `--boards LIST` | procure | `1,10` | Units to price, comma-separated; each gets its cheapest order and totals per supplier. |
 | `--step` | gates, export | off | Also export a STEP model. |
+| `--fab NAME` | gates, drc | none | Also check a fab's limits: a rule set in `rules/` (`sierra-circuits-web`) or a `.kicad_dru` path, laid over the project's own rules on a copy in `<out>/fab-<name>/`. A design file's `fab` field does the same for good (`rules/README.md`). |
 | `--dsn FILE` | autoroute | `<project>/<name>.dsn`, then `build/route/<name>.dsn` | Specctra DSN exported from KiCad. Absent means the command skips. |
 | `--passes N` | autoroute, design | `20` autoroute, `60` design | FreeRouting optimisation passes. |
 | `--threads N` | autoroute | engine default | FreeRouting thread count. |

@@ -231,11 +231,40 @@ def gate_erc(project: Project, out: Path, strict: bool = False) -> Result:
     )
 
 
+def fab_copy(project: Project, fab: str, out: Path) -> Path:
+    """A copy of the project's board, schematics and project file in `out`/fab-<name>/, with the fab's
+    rules laid over the project's own .kicad_dru (rules/README.md). Returns the copied board."""
+    sys.path.insert(0, str(SRC_DIR / "tools"))
+    import kicadgen
+
+    src = kicadgen.fab_rules(fab)
+    work = out / f"fab-{src.stem}"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    for f in project.dir.iterdir():
+        if f.suffix in (".kicad_pcb", ".kicad_pro", ".kicad_sch"):
+            shutil.copy2(f, work / f.name)
+    own = project.dir / f"{project.name}.kicad_dru"
+    rules = own.read_text(encoding="utf-8").rstrip("\n") + "\n\n" if own.is_file() else "(version 1)\n"
+    # One version line per file; the fab's rules follow the project's, so a later rule of the same
+    # kind (the fab's) is the one KiCad reports.
+    fab_text = re.sub(r"^\(version \d+\)\s*", "", src.read_text(encoding="utf-8"))
+    (work / f"{project.name}.kicad_dru").write_text(rules + fab_text, encoding="utf-8")
+    return work / project.pcb.name
+
+
 @timed
-def gate_drc(project: Project, out: Path, strict: bool = False) -> Result:
+def gate_drc(project: Project, out: Path, strict: bool = False, fab: str | None = None) -> Result:
     if not project.pcb:
         return Result("drc", "skip", "no board in project")
     report = out / "drc.json"
+    board = project.pcb
+    if fab:
+        try:
+            board = fab_copy(project, fab, out)
+        except ValueError as exc:
+            return Result("drc", "error", str(exc))
     cmd = [
         KICAD_CLI,
         "pcb",
@@ -249,8 +278,8 @@ def gate_drc(project: Project, out: Path, strict: bool = False) -> Result:
     ]
     if project.sch:
         cmd.append("--schematic-parity")
-    cmd.append(project.pcb)
-    proc = run(cmd, cwd=project.dir)
+    cmd.append(board)
+    proc = run(cmd, cwd=board.parent)
     if proc.returncode not in (0, 5) or not report.is_file():
         return Result("drc", "error", f"kicad-cli exited {proc.returncode}", {"stderr": proc.stderr[-2000:]})
     data = load_json(report)
@@ -263,8 +292,10 @@ def gate_drc(project: Project, out: Path, strict: bool = False) -> Result:
         "drc",
         "fail" if red else "pass",
         f"{errors} errors, {warnings} warnings "
-        f"({len(groups['unconnected_items'])} unconnected, {len(groups['schematic_parity'])} parity)",
+        f"({len(groups['unconnected_items'])} unconnected, {len(groups['schematic_parity'])} parity)"
+        + (f", fab rules {Path(fab).stem}" if fab else ""),
         {
+            "fab": Path(fab).stem if fab else None,
             "counts": counts,
             "first": first_violations(
                 groups["violations"] + groups["unconnected_items"] + groups["schematic_parity"]
@@ -1369,6 +1400,8 @@ def cmd_gates(args) -> int:
         kwargs = {"strict": args.strict}
         if gate == "export":
             kwargs["step"] = args.step
+        if gate == "drc":
+            kwargs["fab"] = args.fab
         result = fn(project, out, **kwargs)
         results.append(result)
         if result.status in ("fail", "error"):
@@ -1403,12 +1436,16 @@ def main(argv: list[str] | None = None) -> int:
         return p
 
     add_project_cmd("erc", "electrical rules check on the schematic")
-    add_project_cmd("drc", "design rules check on the board, with schematic parity")
+    p = add_project_cmd("drc", "design rules check on the board, with schematic parity")
+    p.add_argument("--fab", help="also check a fab's limits: a rule set in rules/ or a .kicad_dru path")
     add_project_cmd("sim", "run ngspice on sim/*.cir and check *.expect.json bounds")
     p = add_project_cmd("export", "fabrication outputs: gerbers, drill, BOM, schematic PDF")
     p.add_argument("--step", action="store_true", help="also export a STEP model")
     p = add_project_cmd("gates", "run erc, drc, sim, export in order; stop at the first red")
     p.add_argument("--step", action="store_true", help="also export a STEP model")
+    p.add_argument(
+        "--fab", help="the DRC also checks a fab's limits: a rule set in rules/ or a .kicad_dru path"
+    )
     p = add_project_cmd("autoroute", "run FreeRouting on the project's Specctra DSN, write a .ses")
     p.add_argument("--dsn", help="Specctra DSN exported from KiCad (default <project>/<name>.dsn)")
     p.add_argument("--passes", type=int, default=20)
@@ -1497,6 +1534,8 @@ def main(argv: list[str] | None = None) -> int:
     kwargs = {"strict": args.strict}
     if args.command == "export":
         kwargs["step"] = args.step
+    if args.command == "drc":
+        kwargs["fab"] = args.fab
     return cmd_gate(args, fn, **kwargs)
 
 

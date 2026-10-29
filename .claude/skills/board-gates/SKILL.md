@@ -36,7 +36,10 @@ never remove one.
 3. For a red gate, read its report before touching the design:
    - ERC: `build/erc.json`, `sheets[].violations[]`.
    - DRC: `build/drc.json`, `violations[]`, `unconnected_items[]`,
-     `schematic_parity[]`.
+     `schematic_parity[]`. A rule named `sierra-web: ...` (or another fab's)
+     is the fab's published limit, from `rules/`: the board moves to meet it,
+     the rule does not. `--fab <name>` checks a fab's limits on a board whose
+     design does not name one.
    - SIM: `build/sim/<deck>.log` and the `checks` block in the gate
      record.
    Each violation has `type`, `severity`, `description`, and

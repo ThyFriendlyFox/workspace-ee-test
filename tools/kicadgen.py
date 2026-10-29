@@ -40,6 +40,8 @@ from pathlib import Path
 
 SYMBOL_DIR = Path(os.environ.get("KICAD_SYMBOL_DIR", "/usr/share/kicad/symbols"))
 FOOTPRINT_DIR = Path(os.environ.get("KICAD_FOOTPRINT_DIR", "/usr/share/kicad/footprints"))
+# Fabrication houses' published limits as KiCad design rules, one .kicad_dru each (rules/README.md).
+FAB_DIR = Path(__file__).resolve().parent.parent / "rules"
 
 SCH_VERSION = 20250114
 PCB_VERSION = 20241229
@@ -634,6 +636,46 @@ class SchRouter:
 
 POWER_LIB = "power"
 
+# A fab rule with no layer and no condition is a board-wide minimum; these are the board settings it
+# raises (Design.board_rules), so the checks that read the board's own rules see the fab's too.
+FAB_BOARD_RULES = {
+    "track_width": "min_track_width",
+    "clearance": "min_clearance",
+    "hole_size": "min_through_hole_diameter",
+    "annular_width": "min_via_annular_width",
+    "hole_clearance": "min_hole_clearance",
+    "hole_to_hole": "min_hole_to_hole",
+    "edge_clearance": "min_copper_edge_clearance",
+}
+_DRU_MIN = re.compile(r"\(constraint\s+(\w+)\s+\(min\s+([\d.]+)mm\)\)")
+
+
+def fab_rules(name: str) -> Path:
+    """The .kicad_dru of a fab: a file name in rules/ without its suffix, or a path to one."""
+    path = Path(name)
+    if path.suffix == ".kicad_dru" and path.is_file():
+        return path
+    path = FAB_DIR / f"{name}.kicad_dru"
+    if path.is_file():
+        return path
+    known = ", ".join(sorted(p.stem for p in FAB_DIR.glob("*.kicad_dru"))) or "none"
+    raise ValueError(f"no fab rule set {name!r}: rules/ holds {known}, or name a .kicad_dru file")
+
+
+def fab_minimums(text: str) -> dict[str, float]:
+    """The board-wide minimums of a .kicad_dru: each rule with no layer and no condition, as the board
+    setting it raises (FAB_BOARD_RULES), in mm. Rules that apply to a layer or a condition stay in the
+    rule file only."""
+    out: dict[str, float] = {}
+    for block in re.split(r"(?m)^\(rule\b", text)[1:]:
+        if "(layer" in block or "(condition" in block:
+            continue
+        for kind, value in _DRU_MIN.findall(block):
+            if kind in FAB_BOARD_RULES:
+                key = FAB_BOARD_RULES[kind]
+                out[key] = max(out.get(key, 0.0), float(value))
+    return out
+
 
 def _inside_polygon(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
     """Even-odd point-in-polygon test."""
@@ -759,6 +801,9 @@ class Design:
         default_factory=list
     )  # text, x, y, layer, size, thickness
     rules: dict[str, float] = field(default_factory=dict)  # overrides for board.design_settings.rules
+    # The fab the board is made for: a rule set in rules/ (or a .kicad_dru path) written into the project
+    # as <name>.kicad_dru, its board-wide minimums laid over the board's own (rules/README.md).
+    fab: str = ""
     zones: list[dict] = field(default_factory=list)  # copper pours, see zone()
     keepouts: list[dict] = field(default_factory=list)  # areas no track or via enters, see keepout()
     islands: list[list[str]] = field(default_factory=list)  # pads cut off from their pour, set by write()
@@ -2432,9 +2477,10 @@ class Design:
     # ---- project
 
     def board_rules(self) -> dict:
-        """The board's design rules as the project file carries them: the workcenter's defaults with
-        `rules` laid over them. The key order is the file's; changing it changes every project."""
-        return {
+        """The board's design rules as the project file carries them: the workcenter's defaults, raised
+        to the fab's board-wide minimums where `fab` names one, with `rules` laid over them. The key
+        order is the file's; changing it changes every project."""
+        base = {
             "min_clearance": 0.0,
             "min_connection": 0.0,
             "min_copper_edge_clearance": self.edge_clearance,
@@ -2452,8 +2498,11 @@ class Design:
             "min_via_diameter": 0.5,
             "solder_mask_to_copper_clearance": 0.0,
             "use_height_for_length_calcs": True,
-            **self.rules,
         }
+        if self.fab:
+            for key, value in fab_minimums(fab_rules(self.fab).read_text(encoding="utf-8")).items():
+                base[key] = max(base[key], value)
+        return {**base, **self.rules}
 
     def check_via_rules(self) -> list[str]:
         """Every via size the board's own rules refuse: the default via, each net class's and each
@@ -2883,6 +2932,14 @@ class Design:
             out_dir / f"{self.name}.kicad_sch": self.schematic(),
             out_dir / f"{self.name}.kicad_pcb": self.board(),
         }
+        if self.fab:
+            # KiCad reads <name>.kicad_dru beside the project: its DRC, and so the gates, check the fab's
+            # limits with the board's own.
+            src = fab_rules(self.fab)
+            files[out_dir / f"{self.name}.kicad_dru"] = (
+                src.read_text(encoding="utf-8").rstrip("\n")
+                + f"\n\n# Copied by the workcenter from {src.name} (Design.fab); edit the source, not this file.\n"
+            )
         for p, text in files.items():
             p.write_text(text, encoding="utf-8")
         # So KiCad finds the project's own footprints and symbols when the files are opened; both are
