@@ -320,9 +320,26 @@ def gate_sim(project: Project, out: Path, strict: bool = False) -> Result:
     sim_out = out / "sim"
     sim_out.mkdir(parents=True, exist_ok=True)
     details, artifacts, failures = {}, [], []
+    # A vendor model a deck includes from a library is checked against its sources.csv row: a file
+    # changed since its row fails the deck, one with no row is a warning (a failure with --strict).
+    # A deck that includes a listed model runs from build/sim/run/<deck>/, with every include made
+    # absolute, the model translated when its row lists fixes, and the row's ngspice mode set.
+    sources = find_sources(project.dir)
+    if sources:
+        try:
+            read_sources(sources)
+        except (OSError, ValueError) as exc:
+            return Result("sim", "error", f"{sources}: {exc}")
+    warned: list[str] = []
     for deck in decks:
         log = sim_out / f"{deck.stem}.log"
-        proc = run([NGSPICE, "-b", "-o", log, deck.name], cwd=sim_dir)
+        models, model_problems, model_warnings, plan = model_rows(deck, sources, sim_out / "run" / deck.stem)
+        failures += model_problems
+        warned += model_warnings
+        if plan:
+            proc = run([NGSPICE, "-b", "-o", log, plan.name], cwd=plan.parent)
+        else:
+            proc = run([NGSPICE, "-b", "-o", log, deck.name], cwd=sim_dir)
         text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
         text += "\n" + (proc.stdout or "") + (proc.stderr or "")
         errors = [ln.strip() for ln in text.splitlines() if NGSPICE_ERROR_RE.match(ln)]
@@ -339,11 +356,24 @@ def gate_sim(project: Project, out: Path, strict: bool = False) -> Result:
                 ok = value is not None and bounds.get("min", float("-inf")) <= value <= bounds.get(
                     "max", float("inf")
                 )
-                checks[name] = {"value": value, "min": bounds.get("min"), "max": bounds.get("max"), "ok": ok}
-                if not ok:
-                    failures.append(
-                        f"{deck.stem}:{name}={value} not in [{bounds.get('min')}, {bounds.get('max')}]"
-                    )
+                checks[name] = {
+                    "value": value,
+                    "min": bounds.get("min"),
+                    "max": bounds.get("max"),
+                    "ok": ok,
+                    "source": bounds.get("source", ""),
+                }
+                if ok:
+                    continue
+                line = f"{deck.stem}:{name}={value} not in [{bounds.get('min')}, {bounds.get('max')}]"
+                if bounds.get("source"):
+                    line += f" ({bounds['source']})"
+                # "warn": a bound on the model against its own datasheet, not on the design: a model
+                # outside it is named, and fails only a strict run.
+                if bounds.get("warn") and value is not None:
+                    warned.append(f"{line}: {bounds['warn']}")
+                else:
+                    failures.append(line)
         if proc.returncode != 0 or errors:
             failures.append(f"{deck.stem}: ngspice exit {proc.returncode}, {len(errors)} error lines")
         details[deck.stem] = {
@@ -351,13 +381,20 @@ def gate_sim(project: Project, out: Path, strict: bool = False) -> Result:
             "errors": errors[:10],
             "measures": measures,
             "checks": checks,
+            "models": models,
+            "ran": str(plan or deck),
         }
         artifacts.append(str(log))
+    if strict:
+        failures += warned
+    summary = f"{len(decks)} decks, {len(failures)} failures"
+    if warned and not strict:
+        summary += f", {len(warned)} warnings"
     return Result(
         "sim",
         "fail" if failures else "pass",
-        f"{len(decks)} decks, {len(failures)} failures",
-        {"decks": details, "failures": failures},
+        summary,
+        {"decks": details, "failures": failures, "warnings": warned, "sources": str(sources or "")},
         artifacts,
     )
 
@@ -881,6 +918,32 @@ def read_parts(path: Path) -> list[PartRow]:
     return rows
 
 
+def schematic_bom(project: Project, bom_csv: Path) -> tuple[list[dict] | None, str]:
+    """The schematic's BOM grouped by value and footprint, DNP lines dropped: (rows, kicad-cli's
+    stderr). Rows is None when kicad-cli wrote none."""
+    proc = run(
+        [
+            KICAD_CLI,
+            "sch",
+            "export",
+            "bom",
+            "--fields",
+            "Reference,Value,Footprint,${QUANTITY},${DNP}",
+            "--group-by",
+            "Value,Footprint",
+            "--labels",
+            "Refs,Value,Footprint,Qty,DNP",
+            "--output",
+            bom_csv,
+            project.sch,
+        ]
+    )
+    if proc.returncode != 0 or not bom_csv.is_file():
+        return None, proc.stderr[-800:]
+    with bom_csv.open(encoding="utf-8", newline="") as fh:
+        return [r for r in csv.DictReader(fh) if not r.get("DNP", "").strip()], ""
+
+
 def unit_price(breaks: list[tuple[int, Decimal]], qty: int) -> Decimal:
     """The price of the largest break at or below qty (the first break when qty is below it)."""
     price = breaks[0][1]
@@ -921,31 +984,13 @@ def gate_procure(
     pdir = out / "procure"
     pdir.mkdir(parents=True, exist_ok=True)
     bom_csv = pdir / "bom.csv"
-    proc = run(
-        [
-            KICAD_CLI,
-            "sch",
-            "export",
-            "bom",
-            "--fields",
-            "Reference,Value,Footprint,${QUANTITY},${DNP}",
-            "--group-by",
-            "Value,Footprint",
-            "--labels",
-            "Refs,Value,Footprint,Qty,DNP",
-            "--output",
-            bom_csv,
-            project.sch,
-        ]
-    )
-    if proc.returncode != 0 or not bom_csv.is_file():
-        return Result("procure", "error", "kicad-cli wrote no BOM", {"stderr": proc.stderr[-800:]})
+    bom, stderr = schematic_bom(project, bom_csv)
+    if bom is None:
+        return Result("procure", "error", "kicad-cli wrote no BOM", {"stderr": stderr})
     try:
         rows = [r for p in parts for r in read_parts(p)]
     except (OSError, ValueError) as exc:
         return Result("procure", "error", str(exc))
-    with bom_csv.open(encoding="utf-8", newline="") as fh:
-        bom = [r for r in csv.DictReader(fh) if not r.get("DNP", "").strip()]
 
     lines = []  # (refs, qty, PartRow | None, value, footprint)
     for b in bom:
@@ -1157,6 +1202,592 @@ def cmd_procure(args) -> int:
     if not parts and (project.dir / "parts.csv").is_file():
         parts = [project.dir / "parts.csv"]
     return emit([gate_procure(project, out, parts, args.boards, args.strict)], args, None)
+
+
+# ----------------------------------------------------------------- sources
+
+SOURCES_COLUMNS = ("MPN", "Kind", "URL", "File", "Revision")
+SOURCE_KINDS = ("datasheet", "spice", "step")
+# Reference letters of the parts a circuit simulation needs a model for: each needs a spice row,
+# with a file or a note saying why there is none.
+SIMULATED_REFS = ("U", "Q", "D")
+
+
+def needs_model(ref: str) -> bool:
+    """Whether a part needs a spice row, by its reference's whole letter prefix: D1 is a diode,
+    DS1 a display."""
+    letters = re.match(r"[A-Za-z]+", ref)
+    return bool(letters) and letters.group(0).upper() in SIMULATED_REFS
+
+
+# Who asks, said plainly; a refused fetch is the supplier's answer and is never retried disguised.
+FETCH_AGENT = "EE-Workcenter/1 (+https://github.com/ThyFriendlyFox/workspace-ee-test)"
+SUBCKT_RE = re.compile(r"^\s*\.subckt\s+(\S+)(.*)$", re.IGNORECASE | re.MULTILINE)
+INCLUDE_RE = re.compile(r"^\s*\.(?:include|inc|lib)\s+[\"']?([^\"'\s]+)", re.IGNORECASE | re.MULTILINE)
+YEAR_RE = re.compile(r"(?<!\d)(19[89]\d|20\d\d)(?!\d)")
+# The Ngspice column: a compatibility mode for ngspice's ngbehavior, and the fixes translate_model
+# applies to a copy in the output directory (the library's file stays as the vendor wrote it).
+NGSPICE_MODES = ("ps", "psa", "lt", "lta", "ltps", "ltpsa", "ki", "a")
+MODEL_FIXES = ("res-model", "tolerance")
+TOLERANCE_RE = re.compile(r"\b(?:LOT|DEV)(?:/\d+)?(?:/(?:UNIFORM|GAUSS|WCASE))?\s*=\s*[\d.]+%?", re.I)
+RES_MODEL_RE = re.compile(r"^\s*\.model\s+(\S+)\s+RES\b\s*\(?([^)\n]*)\)?", re.I | re.M)
+HEADER_RE = re.compile(r"\b(version|revision|rev\b|date|created|copyright|released)", re.IGNORECASE)
+
+
+@dataclass
+class SourceRow:
+    """One row of a library's sources.csv: where a part's datasheet, SPICE model or 3D body came from,
+    the file kept for it (relative to sources.csv), and what that file must hold."""
+
+    mpn: str
+    kind: str  # datasheet | spice | step
+    url: str
+    file: str  # empty: none exists, and the note says why
+    member: str  # the file inside a zip at URL
+    revision: str  # the revision as the file prints it
+    dated: str  # the revision's year (or YYYY-MM), for the model-against-datasheet check
+    subckt: str  # spice: the .SUBCKT the decks use
+    ngspice: str  # spice: the compatibility mode ngspice needs (ps, lt, ...), empty for none
+    sha256: str
+    checked: str
+    note: str
+    source: str  # file:line
+
+
+def read_sources(path: Path) -> list[SourceRow]:
+    rows = []
+    with path.open(encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        missing = [c for c in SOURCES_COLUMNS if c not in (reader.fieldnames or [])]
+        if missing:
+            raise ValueError(f"{path}: no column {', '.join(missing)}")
+        for n, raw in enumerate(reader, start=2):
+            where = f"{path.name}:{n}"
+            cells = {k: (v or "").strip() for k, v in raw.items() if k}
+
+            def cell(name: str, cells: dict = cells) -> str:
+                return cells.get(name, "")
+
+            row = SourceRow(
+                mpn=cell("MPN"),
+                kind=cell("Kind").lower(),
+                url=cell("URL"),
+                file=cell("File"),
+                member=cell("Member"),
+                revision=cell("Revision"),
+                dated=cell("Dated"),
+                subckt=cell("Subckt"),
+                ngspice=cell("Ngspice"),
+                sha256=cell("SHA256").lower(),
+                checked=cell("Checked"),
+                note=cell("Note"),
+                source=where,
+            )
+            if not row.mpn:
+                raise ValueError(f"{where}: no MPN")
+            if row.kind not in SOURCE_KINDS:
+                raise ValueError(f"{where}: Kind {row.kind!r} is not one of {', '.join(SOURCE_KINDS)}")
+            if not row.file and not row.note:
+                raise ValueError(f"{where}: a row without a File needs a Note saying why there is none")
+            ngspice_mode(row)  # a bad Ngspice cell is an error here, not at simulation time
+            rows.append(row)
+    return rows
+
+
+def ngspice_mode(row: SourceRow) -> tuple[str, set[str]]:
+    """The row's Ngspice cell: (compatibility mode or "", fixes)."""
+    mode, fixes = "", set()
+    for tok in row.ngspice.split():
+        t = tok.lower()
+        if t in NGSPICE_MODES and not mode:
+            mode = t
+        elif t in MODEL_FIXES:
+            fixes.add(t)
+        else:
+            raise ValueError(
+                f"{row.source}: Ngspice {tok!r} is not a mode ({', '.join(NGSPICE_MODES)}) "
+                f"or a fix ({', '.join(MODEL_FIXES)})"
+            )
+    return mode, fixes
+
+
+def translate_model(text: str, fixes: set[str]) -> str:
+    """PSpice syntax that ngspice reads differently, rewritten. 'tolerance' drops LOT and DEV specs,
+    which ngspice ignores with a warning each. 'res-model' folds a RES model into the resistors that
+    name it: PSpice makes such a resistor its value times the model's R, ngspice takes the value
+    alone (a 99.5 Ohm resistor becomes 1 Ohm); the model's TC1 and TC2 move to the instance."""
+    if not fixes:
+        return text
+    text = re.sub(r"\n[ \t]*\+", " ", text)
+    if "tolerance" in fixes:
+        text = TOLERANCE_RE.sub("", text)
+    if "res-model" in fixes:
+        models = {
+            m.group(1).upper(): {k.upper(): v for k, v in re.findall(r"(\w+)\s*=\s*([^\s)]+)", m.group(2))}
+            for m in RES_MODEL_RE.finditer(text)
+        }
+        out = []
+        for ln in text.splitlines():
+            if RES_MODEL_RE.match(ln):
+                out.append(f"* {ln.strip()}   (folded into the resistors that name it)")
+                continue
+            m = re.match(r"^(\s*R\S*\s+\S+\s+\S+)\s+(\S+)\s+(\S+)(.*)$", ln, re.I)
+            if m and m.group(2).upper() in models:
+                p = models[m.group(2).upper()]
+                tc = "".join(f" {k.lower()}={p[k]}" for k in ("TC1", "TC2") if k in p)
+                out.append(f"{m.group(1)} {{{p.get('R', '1')}*{m.group(3)}}}{tc}{m.group(4)}")
+                continue
+            out.append(ln)
+        text = "\n".join(out) + "\n"
+    return text
+
+
+def find_sources(start: Path) -> Path | None:
+    """The nearest library/sources.csv at or above `start`, up to the repository's root."""
+    for d in (start, *start.parents):
+        cand = d / "library" / "sources.csv"
+        if cand.is_file():
+            return cand
+        if (d / ".git").exists():
+            break
+    return None
+
+
+def file_sha256(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def normalized(text: str) -> str:
+    """For finding a printed revision in extracted text: dashes, spaces and case made alike."""
+    for dash in "‐‑‒–—−":
+        text = text.replace(dash, "-")
+    return re.sub(r"\s+", " ", text).casefold()
+
+
+def file_text(path: Path) -> str | None:
+    """The file's text: pdftotext for a PDF (None without it), the bytes as text otherwise."""
+    if path.suffix.lower() == ".pdf":
+        if not shutil.which("pdftotext"):
+            return None
+        proc = run(["pdftotext", "-q", path, "-"], timeout=120)
+        return proc.stdout if proc.returncode == 0 else ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def spice_facts(text: str) -> dict:
+    """What a SPICE library defines and needs: subcircuits with their pins, model names, the files
+    it includes, and the comment lines near its top that carry a version or a date."""
+    joined = re.sub(r"\n[ \t]*\+", " ", text)  # continuation lines
+    subckts = {}
+    for m in SUBCKT_RE.finditer(joined):
+        pins = []
+        for tok in m.group(2).split():
+            if tok.endswith(":") or "=" in tok or tok.lower().startswith("params"):
+                break
+            pins.append(tok)
+        subckts[m.group(1).upper()] = pins
+    models = sorted({m.upper() for m in re.findall(r"^\s*\.model\s+(\S+)", joined, re.I | re.M)})
+    includes = INCLUDE_RE.findall(joined)
+    header = []
+    for ln in text.splitlines()[:80]:
+        s = ln.strip()
+        if s.startswith("*") and HEADER_RE.search(s):
+            header.append(s.lstrip("* ").strip())
+    return {"subckts": subckts, "models": models, "includes": includes, "header": header[:8]}
+
+
+def prepared_model(row: SourceRow, path: Path, work: Path) -> Path:
+    """The file ngspice should read for a row: the library's own, or a translated copy in `work`
+    when the row lists fixes."""
+    _, fixes = ngspice_mode(row)
+    if not fixes:
+        return path
+    work.mkdir(parents=True, exist_ok=True)
+    dest = work / f"{path.stem}.ngspice{path.suffix or '.lib'}"
+    text = path.read_text(encoding="utf-8", errors="replace")
+    dest.write_text(
+        f"* {path.name} as ngspice reads it: {', '.join(sorted(fixes))} (workcenter translate_model)\n"
+        + translate_model(text, fixes),
+        encoding="utf-8",
+    )
+    return dest
+
+
+def ngspice_load_errors(lib: Path, subckt: str, pins: list[str], row: SourceRow, work: Path) -> list[str]:
+    """Load a subcircuit in ngspice: include the file (translated when the row lists fixes), place one
+    instance with every pin tied to ground through 1 GOhm, and run no analysis. Returns ngspice's
+    error lines (empty: it loaded)."""
+    work.mkdir(parents=True, exist_ok=True)
+    lib = prepared_model(row, lib, work)
+    nodes = [f"n{i}" for i in range(len(pins))]
+    deck = [f"* load check: {subckt} from {lib.name}", f'.include "{lib}"', f"X1 {' '.join(nodes)} {subckt}"]
+    deck += [f"R{i} {n} 0 1G" for i, n in enumerate(nodes)]
+    # No analysis: ngspice loads the circuit (every model bound), echoes, and stops.
+    deck += [".control", "echo loaded", ".endc", ".end", ""]
+    (work / "load.cir").write_text("\n".join(deck), encoding="utf-8")
+    init = work / ".spiceinit"
+    compat, _ = ngspice_mode(row)
+    if compat:
+        init.write_text(f"set ngbehavior={compat}\n", encoding="utf-8")
+    elif init.exists():
+        init.unlink()
+    proc = run([NGSPICE, "-b", "load.cir"], cwd=work, timeout=120)
+    text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    errors = [ln.strip() for ln in text.splitlines() if NGSPICE_ERROR_RE.match(ln)]
+    # ngspice exits 1 in batch mode whenever no analysis runs, so the verdict is its error lines and
+    # the echo, which it reaches only once the circuit has loaded.
+    if not errors and "loaded" not in (proc.stdout or "").split():
+        errors = [f"ngspice stopped before the circuit loaded (exit {proc.returncode})"]
+    return errors
+
+
+def fetch_url(url: str, member: str = "") -> tuple[str, bytes | None, str]:
+    """GET a URL as FETCH_AGENT: ("ok", bytes, final URL), or ("refused" | "gone" | "unreachable" |
+    "error", None, why). A zip's member is read out when one is named."""
+    import io
+    import urllib.error
+    import urllib.request
+    import zipfile
+
+    req = urllib.request.Request(url, headers={"User-Agent": FETCH_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            body, final = resp.read(), resp.geturl()
+    except urllib.error.HTTPError as exc:
+        kind = {401: "refused", 403: "refused", 429: "refused", 404: "gone", 410: "gone"}.get(
+            exc.code, "error"
+        )
+        return kind, None, f"HTTP {exc.code}"
+    except (urllib.error.URLError, OSError) as exc:
+        return "unreachable", None, str(getattr(exc, "reason", exc))
+    if member:
+        try:
+            with zipfile.ZipFile(io.BytesIO(body)) as zf:
+                body = zf.read(member)
+        except (zipfile.BadZipFile, KeyError) as exc:
+            return "error", None, f"no member {member!r} in the download: {exc}"
+    return "ok", body, final
+
+
+def year_of(text: str) -> int | None:
+    years = [int(y) for y in YEAR_RE.findall(text)]
+    return max(years) if years else None
+
+
+def check_source(row: SourceRow, library: Path, work: Path) -> tuple[dict, list[str], list[str]]:
+    """Check one row's file against what the row says. Returns (facts, problems, warnings)."""
+    facts: dict = {"kind": row.kind, "file": row.file or None, "revision": row.revision, "url": row.url}
+    problems: list[str] = []
+    warnings: list[str] = []
+    tag = f"{row.mpn} {row.kind}"
+    if not row.file:
+        facts["none"] = row.note
+        if row.kind == "datasheet":
+            warnings.append(f"{tag}: no datasheet kept ({row.note})")
+        return facts, problems, warnings
+    path = (library / row.file).resolve()
+    if not path.is_file():
+        problems.append(f"{tag}: {row.file} is not in the library ({row.source})")
+        return facts, problems, warnings
+    digest = file_sha256(path)
+    facts["sha256"] = digest
+    if not row.sha256:
+        warnings.append(f"{tag}: no SHA256 recorded for {row.file}; it is {digest}")
+    elif digest != row.sha256:
+        problems.append(
+            f"{tag}: {row.file} changed since its row: SHA256 {digest}, the row says {row.sha256}"
+        )
+    if row.kind == "step":
+        head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+        if not head.lstrip().startswith("ISO-10303-21"):
+            problems.append(f"{tag}: {row.file} is not a STEP file (no ISO-10303-21 header)")
+        name = re.search(r"FILE_NAME\s*\(\s*'([^']*)'\s*,\s*'([^']*)'", head)
+        if name:
+            facts["step_name"], facts["step_date"] = name.group(1), name.group(2)
+        return facts, problems, warnings
+    text = file_text(path)
+    if row.revision:
+        if text is None:
+            warnings.append(f"{tag}: revision not checked, pdftotext is not installed")
+        elif normalized(row.revision) not in normalized(text):
+            problems.append(
+                f"{tag}: {row.file} does not print the revision {row.revision!r}; a new revision?"
+            )
+    else:
+        warnings.append(f"{tag}: no Revision recorded for {row.file}")
+    if row.kind == "spice" and text is not None:
+        sf = spice_facts(text)
+        facts.update({"subckts": sorted(sf["subckts"]), "models": sf["models"], "header": sf["header"]})
+        missing_inc = []
+        for inc in sf["includes"]:
+            if not (path.parent / inc).is_file():
+                missing_inc.append(inc)
+        facts["includes"] = sf["includes"]
+        if missing_inc:
+            problems.append(f"{tag}: sub-models not in the library: {', '.join(missing_inc)}")
+        if not row.subckt:
+            warnings.append(f"{tag}: no Subckt named, so ngspice's load check did not run")
+        elif row.subckt.upper() not in sf["subckts"]:
+            problems.append(
+                f"{tag}: {row.file} defines no .SUBCKT {row.subckt} "
+                f"(it defines {', '.join(sorted(sf['subckts'])) or 'none'})"
+            )
+        elif not missing_inc:
+            if not shutil.which(NGSPICE):
+                warnings.append(f"{tag}: load check skipped, {NGSPICE} is not installed")
+            else:
+                errs = ngspice_load_errors(
+                    path, row.subckt, sf["subckts"][row.subckt.upper()], row, work / f"{row.mpn}-load"
+                )
+                facts["ngspice"] = "loads" if not errs else errs[:5]
+                if errs:
+                    problems.append(f"{tag}: {row.subckt} does not load in ngspice: {errs[0]}")
+    return facts, problems, warnings
+
+
+@timed
+def gate_sources(
+    project: Project,
+    out: Path,
+    parts: list[Path],
+    sources: Path | None,
+    fetch: bool = False,
+    strict: bool = False,
+) -> Result:
+    """Every part on the schematic against the library's sources.csv: a datasheet for each, a SPICE
+    model (or a note why none) for each U, Q and D, each kept file present, unchanged, printing the
+    revision its row records, each model loading in ngspice with its sub-models, and a model older
+    than its datasheet named. --fetch reads each URL again and says which differ from the library's
+    copy. Writes sources/sources.md and sources.json; never writes the library."""
+    if not project.sch:
+        return Result("sources", "skip", "no schematic in project")
+    sources = sources or find_sources(project.dir)
+    if not sources:
+        return Result(
+            "sources", "skip", "no library/sources.csv at or above the project: name one with --sources"
+        )
+    if not parts:
+        return Result(
+            "sources", "skip", f"no parts file: name one with --parts or add {project.dir / 'parts.csv'}"
+        )
+    sdir = out / "sources"
+    sdir.mkdir(parents=True, exist_ok=True)
+    bom, stderr = schematic_bom(project, sdir / "bom.csv")
+    if bom is None:
+        return Result("sources", "error", "kicad-cli wrote no BOM", {"stderr": stderr})
+    try:
+        prows = [r for p in parts for r in read_parts(p)]
+        srows = read_sources(sources)
+    except (OSError, ValueError) as exc:
+        return Result("sources", "error", str(exc))
+    library = sources.parent
+
+    board: dict[str, list[str]] = {}  # MPN -> refs
+    no_part = []
+    for b in bom:
+        m = next(
+            (r for r in prows if r.footprint and r.value == b["Value"] and r.footprint == b["Footprint"]),
+            None,
+        )
+        if m is None or not m.buys or not m.mpn:
+            if m is None or m.buys:
+                no_part.append(f"{b['Refs']} {b['Value']}")
+            continue
+        board.setdefault(m.mpn, []).extend(r.strip() for r in b["Refs"].split(","))
+
+    problems, warnings, parts_out = [], [], []
+    for mpn, refs in board.items():
+        rows = [r for r in srows if r.mpn == mpn]
+        entry = {"mpn": mpn, "refs": refs, "rows": []}
+        kinds = {r.kind for r in rows}
+        if "datasheet" not in kinds:
+            problems.append(f"{','.join(refs)} {mpn}: no datasheet row")
+        if "spice" not in kinds and any(needs_model(r) for r in refs):
+            problems.append(f"{','.join(refs)} {mpn}: no spice row (a model file, or a note why none)")
+        years = {}
+        for r in rows:
+            facts, p, w = check_source(r, library, sdir)
+            problems += p
+            warnings += w
+            entry["rows"].append(facts)
+            if r.file and r.dated and year_of(r.dated):
+                years.setdefault(r.kind, year_of(r.dated))
+        if "spice" in years and "datasheet" in years and years["spice"] < years["datasheet"]:
+            warnings.append(
+                f"{mpn}: the model is dated {years['spice']}, the datasheet {years['datasheet']}: read the "
+                "datasheet's revision history for changes the model predates"
+            )
+            entry["model_older"] = True
+        parts_out.append(entry)
+
+    fetched = []
+    if fetch:
+        fdir = sdir / "fetched"
+        for r in srows:
+            if r.mpn not in board or not r.url or (not r.file and r.kind != "datasheet"):
+                continue
+            status, body, detail = fetch_url(r.url, r.member)
+            item = {"mpn": r.mpn, "kind": r.kind, "url": r.url, "status": status, "detail": detail}
+            if body is not None:
+                name = r.file or f"{r.mpn}-{r.kind}"
+                dest = fdir / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(body)
+                item["fetched"] = str(dest)
+                kept = (library / r.file) if r.file else None
+                if kept is None or not kept.is_file():
+                    item["status"] = "new"
+                    warnings.append(f"{r.mpn} {r.kind}: fetched, not in the library yet: {dest}")
+                elif file_sha256(dest) == file_sha256(kept):
+                    item["status"] = "same"
+                else:
+                    item["status"] = "changed"
+                    warnings.append(
+                        f"{r.mpn} {r.kind}: the supplier's copy differs from {r.file}: read its revision, "
+                        f"then replace the file and its row ({dest})"
+                    )
+            else:
+                warnings.append(f"{r.mpn} {r.kind}: {r.url} {status} ({detail})")
+            fetched.append(item)
+
+    details = {
+        "sources": str(sources),
+        "parts": parts_out,
+        "no_part": no_part,
+        "problems": problems,
+        "warnings": warnings,
+        "fetched": fetched,
+    }
+    (sdir / "sources.json").write_text(json.dumps(details, indent=2), encoding="utf-8")
+
+    def cell(facts: dict) -> str:
+        if facts.get("none"):
+            return "none: " + facts["none"].replace("|", "/")
+        bits = [f"`{facts['file']}`"]
+        if facts.get("revision"):
+            bits.append(facts["revision"].replace("|", "/"))
+        if facts.get("ngspice") == "loads":
+            bits.append("loads in ngspice")
+        return ", ".join(bits)
+
+    md = [
+        f"# Sources: {project.name}",
+        "",
+        f"Every part on `{project.sch.name}` against `{sources}`: its datasheet, SPICE model and 3D body,"
+        " each file's revision as it prints it.",
+        "",
+        "| Refs | MPN | Datasheet | SPICE | 3D |",
+        "|---|---|---|---|---|",
+    ]
+    for e in parts_out:
+        by = {k: [cell(f) for f in e["rows"] if f["kind"] == k] for k in SOURCE_KINDS}
+        md.append(
+            f"| {','.join(e['refs'])} | {e['mpn']} | "
+            + " | ".join("; ".join(by[k]) or "" for k in SOURCE_KINDS)
+            + " |"
+        )
+    md.append("")
+    for title, items in (("Problems", problems), ("Warnings", warnings), ("No part named", no_part)):
+        if items:
+            md += [f"## {title}", "", *[f"- {i}" for i in items], ""]
+    if fetched:
+        md += [
+            "## Fetched",
+            "",
+            *[f"- {f['mpn']} {f['kind']}: {f['status']} ({f['url']})" for f in fetched],
+            "",
+        ]
+    (sdir / "sources.md").write_text("\n".join(md), encoding="utf-8")
+
+    summary = f"{len(board)} parts, {len(problems)} problems, {len(warnings)} warnings"
+    if fetch:
+        changed = sum(1 for f in fetched if f["status"] == "changed")
+        summary += f"; fetched {len(fetched)}, {changed} changed"
+    failed = problems or (strict and warnings)
+    return Result(
+        "sources",
+        "fail" if failed else "pass",
+        summary,
+        details,
+        [str(sdir / "sources.md"), str(sdir / "sources.json")],
+    )
+
+
+def model_rows(
+    deck: Path, sources: Path | None, run_dir: Path
+) -> tuple[list[dict], list[str], list[str], Path | None]:
+    """The library models a sim deck includes, each against its sources.csv row: (models, problems,
+    warnings, the deck to run). A model whose file changed since its row is a problem; one with no
+    row a warning. When the deck includes a listed model, it is written again into run_dir with
+    every include absolute (the model's translated copy where its row lists fixes) and a .spiceinit
+    for the rows' ngspice mode; otherwise the deck to run is None and it runs as it is."""
+    text = deck.read_text(encoding="utf-8", errors="replace")
+    rows = read_sources(sources) if sources else []
+    library = sources.parent.resolve() if sources else None
+    models, problems, warnings = [], [], []
+    replace: dict[str, Path] = {}
+    modes: set[str] = set()
+    listed = False
+    for inc in INCLUDE_RE.findall(text):
+        path = (deck.parent / inc).resolve()
+        item = {"file": inc, "exists": path.is_file()}
+        replace[inc] = path
+        if not path.is_file():
+            problems.append(f"{deck.stem}: includes {inc}, which is not there")
+            models.append(item)
+            continue
+        digest = file_sha256(path)
+        item["sha256"] = digest
+        row = None
+        if library and library in path.parents:
+            rel = path.relative_to(library).as_posix()
+            row = next((r for r in rows if r.file == rel), None)
+        if row is None:
+            warnings.append(f"{deck.stem}: {inc} has no row in a library's sources.csv")
+        else:
+            listed = True
+            mode, fixes = ngspice_mode(row)
+            item.update({"mpn": row.mpn, "revision": row.revision, "mode": mode, "fixes": sorted(fixes)})
+            if mode:
+                modes.add(mode)
+            if row.sha256 and row.sha256 != digest:
+                problems.append(
+                    f"{deck.stem}: {inc} changed since its sources row ({row.mpn}, {row.revision})"
+                )
+            replace[inc] = prepared_model(row, path, run_dir)
+        models.append(item)
+    if not listed:
+        return models, problems, warnings, None
+    if len(modes) > 1:
+        problems.append(f"{deck.stem}: its models need different ngspice modes: {', '.join(sorted(modes))}")
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    def absolute(m: re.Match) -> str:
+        return m.group(0).replace(m.group(1), str(replace.get(m.group(1), m.group(1))))
+
+    (run_dir / deck.name).write_text(INCLUDE_RE.sub(absolute, text), encoding="utf-8")
+    init = run_dir / ".spiceinit"
+    if modes:
+        init.write_text(f"set ngbehavior={sorted(modes)[0]}\n", encoding="utf-8")
+    elif init.exists():
+        init.unlink()
+    return models, problems, warnings, run_dir / deck.name
+
+
+def cmd_sources(args) -> int:
+    project = find_project(args.project)
+    out = out_dir_for(project, args.out)
+    parts = [Path(p).resolve() for p in args.parts] if args.parts else []
+    if not parts and (project.dir / "parts.csv").is_file():
+        parts = [project.dir / "parts.csv"]
+    sources = Path(args.sources).resolve() if args.sources else None
+    return emit([gate_sources(project, out, parts, sources, args.fetch, args.strict)], args, None)
 
 
 # --------------------------------------------------------------- commands
@@ -1491,6 +2122,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--boards", type=board_counts, default="1,10", help="units to price, comma-separated (default 1,10)"
     )
+    p = add_project_cmd(
+        "sources",
+        "each part's datasheet, SPICE model and 3D body against library/sources.csv; --fetch rereads them",
+    )
+    p.add_argument(
+        "--parts",
+        action="append",
+        metavar="FILE",
+        help="a parts CSV naming each line's MPN (repeatable); default <project>/parts.csv",
+    )
+    p.add_argument(
+        "--sources", help="the library's sources.csv (default: the nearest library/sources.csv above)"
+    )
+    p.add_argument(
+        "--fetch", action="store_true", help="read every URL again and compare it with the library's copy"
+    )
     p = sub.add_parser(
         "design", help="build a kicadgen design.py into a KiCad project; --route runs FreeRouting"
     )
@@ -1533,6 +2180,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_gates(args)
     if args.command == "procure":
         return cmd_procure(args)
+    if args.command == "sources":
+        return cmd_sources(args)
     if args.command == "autoroute":
         return cmd_gate(
             args, gate_autoroute, dsn=args.dsn, passes=args.passes, threads=args.threads, timeout=args.timeout
