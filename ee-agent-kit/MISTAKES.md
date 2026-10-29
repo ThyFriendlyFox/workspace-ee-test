@@ -327,7 +327,7 @@ Root cause: nothing compared the bodies the footprints name with the files on di
 Process: P23
 
 ## M53 — 2026-10-27 — `cd` again, in a session with two repositories
-What happened: two commands started with `cd` while the generator was being tested. The no-cd hook does not load in a session with two repositories, and P8 was not read again. Nothing ran in the wrong place. Later in the same session a third one did, listing the board repo's parts files: a loop over absolute paths with a `cd` left in front of it from an earlier draft of the command. A fourth, the next day, put `cd` into the workcenter before reading a footprint with an absolute path that needed no `cd` at all. A fifth, on 2026-10-29, put `cd /tmp` in front of a scratch plotting script whose every path was already absolute. A sixth, the same day, put `cd` into the board repo in front of a `git -C` status check that needed none; the session's working directory moved with it.
+What happened: two commands started with `cd` while the generator was being tested. The no-cd hook does not load in a session with two repositories, and P8 was not read again. Nothing ran in the wrong place. Later in the same session a third one did, listing the board repo's parts files: a loop over absolute paths with a `cd` left in front of it from an earlier draft of the command. A fourth, the next day, put `cd` into the workcenter before reading a footprint with an absolute path that needed no `cd` at all. A fifth, on 2026-10-29, put `cd /tmp` in front of a scratch plotting script whose every path was already absolute. A sixth, the same day, put `cd` into the board repo in front of a `git -C` status check that needed none; the session's working directory moved with it. A seventh, the same day, repeated the fifth exactly: `cd /tmp` in front of a scratch region script whose paths were all absolute. An eighth put `cd` into the board repo's firmware folder in front of a listing of that folder by its absolute path; the session's working directory stayed there.
 Cost: none this time; the third and fourth each left the shell in another folder until the session restarted, and every later command had to carry absolute paths and `git -C`.
 Root cause: habit, with the hook that refuses it absent in this kind of session; installing it user-wide is the user's decision.
 Process: P8
@@ -349,3 +349,39 @@ What happened: the Last Hit's v0.6 replaced a 500 mAh pouch, which came with a p
 Cost: v0.11 to add a protection circuit (BQ29700 and FDMB2307NZ), tab pads and a welded-tab cell; five archived versions whose notes are wrong about protection.
 Root cause: P20 asked for every value taken from the old part's ratings and nothing about what the old part did: its protection and its connection left with it unnoticed.
 Process: P20
+
+## M57 — 2026-10-29 — A peg slot's keep-out drawn across the slot
+What happened: the Last Hit's v0.12 drew a keep-out round the USB-C receptacle's front peg, an oval non-plated slot, so tracks would pass it. The slot's long axis was taken from the footprint file, where it runs along x; the receptacle is placed rotated, and on the board the slot runs along y (x 132.31 to 132.89, y 102.1 to 103.1). The DRC found copper 0.2505 mm from the slot's end, under Sierra's 0.3302 mm drill-to-copper rule, where the keep-out had left the end open.
+Cost: one DRC round and a redrawn keep-out.
+Root cause: P1 takes pad positions from the board, but a slot's orientation is not a position, and nothing said where to read it.
+Process: P1
+
+## M58 — 2026-10-29 — An update path a user could never reach
+What happened: v0.12's plan for loading firmware over USB kept v0.11's way into the ROM bootloader: hold the button while the MCU powers up, and the firmware jumps to the ROM. Since v0.11 the cell is built in, so the MCU powers up once, at assembly, and resets only on a fault; no user would ever reach the bootloader. The jump would also have carried the running independent watchdog (4 s) into the DFU session. Both were found while writing the upload steps for the firmware README, before any commit.
+Cost: the entry redesigned (a 10 s hold with USB present, the C0's EMPTY flag and a reset), with a test of the hold, a test of the app's hand-over, and three more mutations.
+Root cause: the feature was checked against the chip's documents, never walked through from the user's side on the device as built: what powers it, when it resets, what is running at the moment of the hand-over.
+Process: P26
+
+## M59 — 2026-10-29 — A parts catalogue rewritten whole to add two rows
+What happened: two rows went into the board repo's `parts/catalog.csv` through Python's `csv` reader and writer. The file's rows end in CRLF and the writer wrote LF, so `git diff --stat` showed all 64 rows changed. A second pass that forced CRLF still changed three rows, which had LF endings of their own. The third pass inserted the two lines as text into the file's bytes.
+Cost: three rewrites of one file; nothing committed.
+Root cause: a round trip through a reader and a writer rewrites every line it does not understand the way the file wrote it; P9 asked for anchors, not for the file's own bytes.
+Process: P9
+
+## M60 — 2026-10-29 — A test's timing counted from the wrong tick
+What happened: a host test for the firmware's 10 s update hold expected the event one millisecond early. The debounced press starts 20 ms after the first raw sample, and the test's count started at the sample. It failed on its first run; the firmware was right.
+Cost: one test run and a corrected count.
+Root cause: P9 asks for a test's geometric expectation to be computed first; a timing expectation was judged instead.
+Process: P9
+
+## M61 — 2026-10-29 — Tests written by a script
+What happened: the v0.12 firmware's new tests (the update hold, the hand-over, the one-point temperature) went into `tests/` through Python replace scripts run from the shell. P9 asks for the Write or Edit tool and a read-back; the `no_script_test_edits.py` hook that refuses such a command does not load in a session with two repositories. The tests were read back afterwards and every new assertion has a mutation that fails it.
+Cost: none found; the read-back came after the tests had run instead of before.
+Root cause: P9 was not read before the edit, and the hook that would have stopped it was absent in this kind of session.
+Process: P9
+
+## M62 — 2026-10-29 — A fab's rule file that loosened every board it touched
+What happened: PR #30 put Sierra Circuits' limits into `rules/sierra-circuits-web.kicad_dru` as plain rules, a 4 mil clearance among them, and copied the file into every project that names the fab. In KiCad a custom rule overrides the board's own constraints and every net class's, so the DRC of the Last Hit's v0.12 checked 0.1016 mm where the board asks for 0.2 mm and its display lines for 0.15 mm, its 0.25 mm minimum hole fell to 0.1524 mm, and the pours filled 0.10 mm from pads. Both v0.12 boards were reported GREEN that way. It came out when `workcenter design` named a GND via 0.183 mm from a heater line on In2 and the DRC had passed it: taken away from a copy, the rule file left 436 errors, and after a refill 2 clearance errors and 3 pour islands. The same run named a second via, a 3.3 V one exactly 0.2 mm from a display line, which was a false alarm the other way: the via check before routing held every pair of nets to the board's default clearance, where KiCad takes the larger of their net classes' (both 0.15 mm here), and compared in floating point.
+Cost: v0.12 regenerated and rerouted where the via sat, its pictures redrawn; the fix, a test that a net class's clearance survives the fab, a test that the via check follows the net classes, and the docs of the rule sets.
+Root cause: a fab's minimum was written as a rule without checking how KiCad combines a custom rule with the board's own rules; it replaces them, and PR #30's tests only checked that the fab's limits fail a board, never that the board's own still do. The via check had its own notion of clearance instead of the DRC's.
+Process: P3

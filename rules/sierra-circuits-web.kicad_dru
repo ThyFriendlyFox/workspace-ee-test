@@ -2,9 +2,11 @@
 # Sierra Circuits (Protoexpress) "Web PCB", the online order ("Standard PCBs", IPC-6012 Class 2).
 # Limits from "Online PCB Fab Capabilities", https://www.protoexpress.com/products/online-pcb-manufacturing/
 # and https://www.protoexpress.com/kb/web-pcb-specs/, read 2026-10-29. Where the two pages disagree the
-# stricter number is used. The workcenter copies this file into a project as <name>.kicad_dru when its
-# design file sets `fab = "sierra-circuits-web"`, and `workcenter drc --fab sierra-circuits-web` lays it
-# over any project's own rules. rules/README.md lists what Sierra publishes that KiCad cannot check here.
+# stricter number is used. When a design file sets `fab = "sierra-circuits-web"`, or for one run with
+# `workcenter drc --fab sierra-circuits-web`, the rules with no layer and no condition raise the board's
+# own minimums, and only the others are copied into the project as <name>.kicad_dru: in KiCad a custom
+# rule overrides every net class's clearance (rules/README.md, M62). rules/README.md lists what Sierra
+# publishes that KiCad cannot check here.
 
 # "Minimum Trace and Space: 4 mil (0.004 in/0.1016 mm)"
 (rule "sierra-web: trace width 4 mil"

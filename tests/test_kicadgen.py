@@ -962,6 +962,26 @@ def test_check_vias_names_what_a_hand_via_hits():
 
 
 @needs_libs
+def test_check_vias_holds_each_pair_of_nets_to_their_classes_clearance():
+    """Between two nets the clearance is the larger of their net classes', as in KiCad's DRC, not the
+    board's default: a via 0.17 mm from a track is clear when both nets' classes allow 0.15 mm, and
+    held to 0.2 mm when one of them has no class. A gap of exactly the clearance is clear."""
+    d = divider()
+    d.track("OUT", [(105.0, 109.2), (107.0, 109.2)], "F.Cu", width=0.2)
+    d.via("VIN", 106.0, 109.2 - 0.3 - 0.1 - 0.17)  # 0.17 mm from the track's edge
+    assert any("on a /OUT track" in p for p in d.check_vias())  # the board's 0.2 mm
+    d.net_classes = {
+        "Tight": {"width": 0.2, "clearance": 0.15, "via": 0.6, "via_drill": 0.3, "nets": ["OUT", "VIN"]}
+    }
+    assert d.check_vias() == []
+    d.net_classes["Tight"]["nets"] = ["OUT"]  # VIN in no class: 0.2 mm
+    assert any("on a /OUT track" in p for p in d.check_vias())
+    d.net_classes = {}
+    d.vias[-1] = ("VIN", (106.0, 109.2 - 0.3 - 0.1 - 0.2), *d.vias[-1][2:])  # exactly 0.2 mm
+    assert d.check_vias() == []
+
+
+@needs_libs
 def test_design_command_reports_a_hand_via_problem_and_fails(tmp_path):
     design = tmp_path / "design.py"
     design.write_text(

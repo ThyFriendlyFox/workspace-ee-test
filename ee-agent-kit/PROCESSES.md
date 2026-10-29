@@ -37,6 +37,11 @@ must clear or land on a pad.
    sits on the other face and the inner layers at that spot; then
    `workcenter design` lists every hand via that hits a pad, a track, a
    via, a keep-out or the edge (and exits 1). Fix those before routing.
+7. A slot's or an oval pad's long axis comes from the placed board as
+   well: the footprint file draws it at rotation 0. Read the hole's size
+   and the footprint's rotation from the generated `.kicad_pcb`, turn the
+   slot by that rotation (and mirror it for `B.Cu`), and draw a keep-out
+   round it from those ends, never from the footprint file (M57).
 
 Done when: the pre-routed board's DRC shows only unconnected items and
 `workcenter design` reports no via problem.
@@ -90,6 +95,14 @@ classes.
    sizes (`Design.check_via_rules()`) and exits 1 before routing. A
    smaller via needs the fab's limit in the README and `d.rules` set to it
    (M46).
+6. A rule file only adds floors. In KiCad a custom rule in a `.kicad_dru`
+   overrides the board's own constraints and every net class's, so a
+   rule with no layer and no condition replaces them all, looser or not.
+   A fab's board-wide limit goes into the board's minimums
+   (`Design.board_rules()`), never into the rule file; a rule that stays
+   is at least as strict as the board setting it shadows. To prove it,
+   take the rule file away from a copy of the board and run its DRC: no
+   new error may appear (M62).
 
 Done when: ERC 0/0 and DRC shows only unconnected items before the first
 route, `workcenter design` reports no via problem, and the via-free areas
@@ -209,10 +222,17 @@ Edit tool.
 6. Tests are written with the Write or Edit tool, not appended by a
    script, and read back before they run: every assertion must be able
    to fail. The `no_script_test_edits.py` hook refuses a Bash command
-   that writes under `tests/` (M43).
+   that writes under `tests/` (M43). The hook does not load in a session
+   with two repositories; the step holds there all the same (M61).
 7. A test's geometric expectation (inside or outside, how far, which
    side) is computed before it is written: one `python3 -c` with the
-   distance printed, not a judgement by eye (M45).
+   distance printed, not a judgement by eye (M45). A timing expectation
+   (the tick an event lands on) likewise, counted from the code's own
+   start: a debounce's first sample, a timer's first period (M60).
+8. Rows added to a data file (a CSV, a table) go in as text inside the
+   file's own bytes, keeping its line ends and quoting; a round trip
+   through a reader and a writer rewrites every line. After the edit,
+   `git diff --stat` shows only the rows meant (M59).
 
 Done when: the script reported every anchor found, and the formatter and
 linter pass on the result.
@@ -568,3 +588,27 @@ writing a parts file (the `procurement` skill).
 
 Done when: every priced row in the parts file has the URL it was read from
 and the date, and the report carries `procure`'s totals and its three lists.
+
+## P26 — A feature the user reaches
+
+When: adding or changing a way the user reaches a feature on the device:
+a button gesture, a port, a mode, a firmware update.
+
+1. Write the user's steps on the device as assembled, from the state it
+   sits in: what powers it, whether it is ever off, when the MCU resets,
+   and what is running at that moment (a watchdog, timers, a load, the
+   display).
+2. Every step must work in that state. A step that needs a reset, a
+   removed cell, a debugger or a jumper is not a user's step; it may stay
+   as a bench path, named as one in the README.
+3. A hand-over to other code (a ROM bootloader, an updater, a second
+   image) lists what the hand-over leaves running and what the other code
+   expects at entry, each from its documentation, cited. What would not
+   survive the hand-over is stopped or reset before it (M58).
+4. Whatever the user keeps across it (a schedule, a calibration) is saved
+   before the hand-over, and a host test drives the user's steps through
+   the app: the hand-over happens only in the intended state, after the
+   save.
+
+Done when: the version's README gives the user's steps, each hand-over's
+entry conditions cite their source, and a host test runs the steps.

@@ -61,6 +61,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 ### Deprecated
 ### Removed
 ### Fixed
+- A fab's rule file no longer loosens a board: in KiCad a custom rule overrides every net class's clearance, so the Sierra set's board-wide 4 mil clearance and 6 mil hole had let pours fill 0.1 mm from pads and a 0.25 mm minimum hole pass at 0.1524 mm. Its board-wide limits are now the board's own minimums (`kicadgen.fab_project_rules`, the `--fab` copy's project file) and only its layer and condition rules are copied, each raised to the board's own setting (M62).
+- `kicadgen`'s via check holds two nets to the larger of their net classes' clearances, as KiCad's DRC does, not to the board default (M62).
 - FreeRouting session coordinates are read at the scale the session's placement block implies, not the declared resolution.
 - FreeRouting pinned to 1.9.0: 2.1.0 hangs after routing in proxied environments because its GitHub version check fails.
 - `kicadgen`'s via check treats a non-plated hole as board edge, as the DRC does; island stitching had put a via 0.2 mm from a receptacle's peg hole (M26).
