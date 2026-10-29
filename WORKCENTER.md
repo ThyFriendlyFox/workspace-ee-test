@@ -41,7 +41,7 @@ passed every gate. "Done" means `workcenter gates <project>` prints GREEN.
 |---|---|---|---|
 | ERC | `workcenter erc <project>` | 0 errors in the ERC report | layout |
 | DRC | `workcenter drc <project>` | 0 errors, 0 unconnected items, 0 parity errors; with the project's fab rules (`<name>.kicad_dru`) when its design names a fab | export |
-| SIM | `workcenter sim <project>` | every `sim/*.cir` runs clean and every `*.expect.json` bound holds | export |
+| SIM | `workcenter sim <project>` | every `sim/*.cir` runs clean, every `*.expect.json` bound holds, and every library model a deck includes is unchanged since its `sources.csv` row | export |
 | EXPORT | `workcenter export <project>` | gerbers, drill, BOM, schematic PDF produced | hand-off to fabrication |
 | ALL | `workcenter gates <project>` | the 4 gates above in order, none red | a board is called done |
 
@@ -93,6 +93,27 @@ Run `placement_audit` and `route_check` on each IC whose parts moved, before
 routing (the `kistack` skill). `move` is refused: a generated board changes in
 its design file.
 
+Not a gate: `workcenter sources <project> --parts parts.csv` checks every
+part on the schematic against the nearest `library/sources.csv` at or above
+the project: a datasheet row for each part, a spice row (a model file, or a
+note why there is none) for each U, Q and D, each kept file present and
+unchanged since its SHA256 was recorded, printing the revision its row
+records, each model defining its `.SUBCKT` and loading in ngspice with its
+sub-models, and a model older than its datasheet named. `--fetch` reads each
+row's URL once more, under the workcenter's own name, and says which files
+differ from the library's (a refusal is recorded, never retried). It writes
+`build/sources/sources.md` and `sources.json` and never writes the library
+(`PROCESSES.md` P27).
+
+The SIM gate runs a deck that includes a listed vendor model from
+`build/sim/run/<deck>/`: the includes made absolute, the model translated
+into a copy where its row's `Ngspice` column lists fixes (`res-model` folds a
+PSpice RES model into its resistors, `tolerance` drops LOT and DEV), and a
+`.spiceinit` setting the row's mode (`ps`, `lt`). The library's file stays as
+the vendor published it. An expect bound with `"warn"` holds a model to its
+own datasheet rather than the design to its spec: outside it, the deck is
+named in the warnings, and only `--strict` fails.
+
 A project may add gates. It may not remove these.
 
 ## Paths
@@ -110,3 +131,7 @@ A project may add gates. It may not remove these.
 - Files: one `<name>.kicad_pro` with `<name>.kicad_sch` and `<name>.kicad_pcb` beside it
 - Optional: `design.py` exposing `build() -> kicadgen.Design`, the source the KiCad files are generated from
 - Optional: `sim/<deck>.cir` with `sim/<deck>.expect.json` for the SIM gate
+- Optional: `library/sources.csv` at or above the project, with the files it
+  names beside it, for `workcenter sources` and the vendor models a deck
+  includes. Columns: `MPN,Kind,URL,File,Member,Revision,Dated,Subckt,Ngspice,SHA256,Checked,Note`;
+  `Kind` is `datasheet`, `spice` or `step`; a row with no `File` needs a `Note`

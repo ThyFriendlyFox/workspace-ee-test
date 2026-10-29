@@ -166,7 +166,13 @@ def test_sources_passes_a_library_that_holds_what_its_rows_say(tmp_path):
     assert step["step_name"] == "R_0603.step"
     # the model's 2007 against the datasheet's 2025, and the two datasheets kept as notes only
     assert any("dated 2007, the datasheet 2025" in w for w in details["warnings"])
-    assert (tmp_path / "o" / "sources" / "sources.md").is_file()
+    # what it writes: the report twice, the schematic's BOM it read, each model's load check
+    sdir = tmp_path / "o" / "sources"
+    assert "RC0603FR-0710KL" in (sdir / "sources.md").read_text(encoding="utf-8")
+    assert {e["mpn"] for e in json.loads((sdir / "sources.json").read_text())["parts"]} == set(by)
+    assert (sdir / "bom.csv").is_file()
+    assert "{99.5*1}" in (sdir / "RC0603FR-0710KL-load" / "rdiv.ngspice.lib").read_text()
+    assert "X1" in (sdir / "RC0603FR-0710KL-load" / "load.cir").read_text().upper()
     code, records = run(
         "sources",
         BOARDS / "pass-rc-divider",
@@ -199,6 +205,23 @@ def test_sources_names_each_way_a_library_drifts_from_its_rows(tmp_path):
     assert any("does not print the revision 'V.14'" in p for p in problems), problems
     assert any("sub-models not in the library: missing.lib" in p for p in problems), problems
     assert any("C1 CL10B104KB8NNNC: no datasheet row" in p for p in problems), problems
+
+
+@needs_kicad
+def test_sources_skips_without_a_library_and_errs_on_a_bad_row(tmp_path):
+    _, parts = library(tmp_path)
+    # the fixture board has no library above it: a skip, exit 2
+    code, records = run("sources", BOARDS / "pass-rc-divider", "--parts", parts, "--out", tmp_path / "o")
+    assert code == 2 and records[0]["status"] == "skip", records
+    assert "--sources" in records[0]["summary"]
+    # a row it cannot check: an error, exit 1
+    bad = tmp_path / "bad.csv"
+    bad.write_text(HEADER + "\nX,schematic,,a.pdf,,,,,,,,\n", encoding="utf-8")
+    code, records = run(
+        "sources", BOARDS / "pass-rc-divider", "--parts", parts, "--sources", bad, "--out", tmp_path / "o"
+    )
+    assert code == 1 and records[0]["status"] == "error", records
+    assert "Kind 'schematic'" in records[0]["summary"]
 
 
 class Supplier(http.server.BaseHTTPRequestHandler):
@@ -305,6 +328,11 @@ def test_sim_runs_a_listed_model_translated_and_checks_its_row(tmp_path):
         "tolerance",
     ]
     assert deck["ran"].endswith("run/rdiv/rdiv.cir")
+    # what it writes: the deck with its include made absolute, onto the translated copy beside it
+    run_dir = tmp_path / "o" / "sim" / "run" / "rdiv"
+    assert f'.include "{run_dir / "rdiv.ngspice.lib"}"' in (run_dir / "rdiv.cir").read_text()
+    assert "{99.5*1}" in (run_dir / "rdiv.ngspice.lib").read_text()
+    assert not (run_dir / ".spiceinit").exists()  # the row names no mode
     # the model edited after its row was written fails the deck
     lib = tmp_path / "library" / "yageo" / "rdiv.lib"
     lib.write_text(MODEL.replace("R2 OUT GND 100", "R2 OUT GND 101"), encoding="utf-8")

@@ -2135,7 +2135,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     p = add_project_cmd(
         "sources",
-        "each part's datasheet, SPICE model and 3D body against library/sources.csv; --fetch rereads them",
+        "each part's datasheet, SPICE model and 3D body against library/sources.csv; writes "
+        "sources/sources.md, sources.json and each model's load check in sources/<MPN>-load/; "
+        "never writes the library",
     )
     p.add_argument(
         "--parts",
@@ -2147,7 +2149,10 @@ def main(argv: list[str] | None = None) -> int:
         "--sources", help="the library's sources.csv (default: the nearest library/sources.csv above)"
     )
     p.add_argument(
-        "--fetch", action="store_true", help="read every URL again and compare it with the library's copy"
+        "--fetch",
+        action="store_true",
+        help="read every URL once more, under the workcenter's own name, into sources/fetched/, "
+        "and say which differ from the library's copy",
     )
     p = sub.add_parser(
         "design", help="build a kicadgen design.py into a KiCad project; --route runs FreeRouting"
