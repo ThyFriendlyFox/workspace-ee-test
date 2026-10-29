@@ -40,10 +40,18 @@ passed every gate. "Done" means `workcenter gates <project>` prints GREEN.
 | Gate | Command | Pass condition | Runs before |
 |---|---|---|---|
 | ERC | `workcenter erc <project>` | 0 errors in the ERC report | layout |
-| DRC | `workcenter drc <project>` | 0 errors, 0 unconnected items, 0 parity errors | export |
+| DRC | `workcenter drc <project>` | 0 errors, 0 unconnected items, 0 parity errors; with the project's fab rules (`<name>.kicad_dru`) when its design names a fab | export |
 | SIM | `workcenter sim <project>` | every `sim/*.cir` runs clean and every `*.expect.json` bound holds | export |
 | EXPORT | `workcenter export <project>` | gerbers, drill, BOM, schematic PDF produced | hand-off to fabrication |
 | ALL | `workcenter gates <project>` | the 4 gates above in order, none red | a board is called done |
+
+A board made for a particular fab checks that fab's published limits in the
+DRC: `rules/` holds them as KiCad design rules (`sierra-circuits-web` for
+Sierra Circuits' Web PCB: 4 mil trace and gap, 6 mil hole and ring, 13 mil
+inner drill to copper, 5 mil legend). A design file's `fab = "<name>"`
+writes the set into the project for good; `workcenter drc|gates --fab
+<name> <project>` checks any project against one once, on a copy
+(`rules/README.md` says what each set cannot check).
 
 Not a gate, but part of every hand-off: `workcenter render <project>` writes
 the schematic, board top and bottom, and 3D images into `build/render/`, and

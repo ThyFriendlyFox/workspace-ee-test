@@ -276,6 +276,11 @@ TRACKS = {
 }
 # The deliberate defect: a GND stub 0.05 mm from C1 pad 1 (VOUT). Default clearance is 0.2 mm.
 CLEARANCE_DEFECT = [((119.0, 116.0), (119.0, 112.65)), ((119.0, 112.65), (116.5, 112.65))]
+# fail-fab-sierra: within KiCad's and the board's own rules, outside Sierra Circuits' Web PCB limits
+# (rules/sierra-circuits-web.kicad_dru): a 0.6/0.3 mm via, a 0.15 mm ring under their 6 mil, joining a
+# bottom-face return of VOUT to J1 pin 2; and a legend label stroked 0.10 mm, under their 5 mil.
+FAB_DEFECT_VIA = (110.0, 107.54)
+FAB_DEFECT_BACK = ((110.0, 107.54), (105.0, 107.54))
 
 FP_FONT = "(effects (font (size 1 1) (thickness 0.15)))"
 
@@ -369,7 +374,7 @@ def footprint_header(ref: str) -> str:
 	)"""
 
 
-def board(defect: bool) -> str:
+def board(defect: bool, fab_defect: bool = False) -> str:
     layers = """
 		(0 "F.Cu" signal)
 		(2 "B.Cu" signal)
@@ -463,6 +468,13 @@ def board(defect: bool) -> str:
     for i, (net, (a, b)) in enumerate(tracks):
         out.append(f"""
 	(segment (start {fmt(a[0])} {fmt(a[1])}) (end {fmt(b[0])} {fmt(b[1])}) (width 0.25) (layer "F.Cu") (net {NETS[net]}) (uuid "{uid(f"seg/{i}/{net}")}"))""")
+    if fab_defect:
+        (a, b), (x, y) = FAB_DEFECT_BACK, FAB_DEFECT_VIA
+        out.append(f"""
+	(segment (start {fmt(a[0])} {fmt(a[1])}) (end {fmt(b[0])} {fmt(b[1])}) (width 0.25) (layer "B.Cu") (net {NETS["/VOUT"]}) (uuid "{uid("fab/back")}"))
+	(via (at {fmt(x)} {fmt(y)}) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net {NETS["/VOUT"]}) (uuid "{uid("fab/via")}"))
+	(gr_text "fab" (at 121.5 103.5 0) (layer "F.SilkS") (uuid "{uid("fab/text")}")
+		(effects (font (size 0.8 0.8) (thickness 0.1))))""")
     out.append("""
 	(embedded_fonts no)
 )
@@ -566,6 +578,7 @@ def project() -> str:
 FIXTURES = {
     "pass-rc-divider": {"defect": False},
     "fail-drc-clearance": {"defect": True},
+    "fail-fab-sierra": {"defect": False, "fab_defect": True},
 }
 
 
@@ -575,7 +588,9 @@ def render() -> dict[Path, str]:
         d = HERE / folder
         files[d / f"{NAME}.kicad_pro"] = project()
         files[d / f"{NAME}.kicad_sch"] = schematic()
-        files[d / f"{NAME}.kicad_pcb"] = board(defect=opts["defect"])
+        files[d / f"{NAME}.kicad_pcb"] = board(
+            defect=opts["defect"], fab_defect=opts.get("fab_defect", False)
+        )
     return files
 
 

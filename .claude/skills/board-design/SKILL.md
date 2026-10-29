@@ -105,9 +105,18 @@ project and routes it with FreeRouting. No GUI at any step.
      outside (the strips along the board edges, past the keep-out circle).
      `workcenter design` lists every hand via that lands in a keep-out or
      on any face's pad, and exits 1.
+   - The fab, before anything is placed: `d.fab = "sierra-circuits-web"`
+     (or another set in `rules/`) writes its limits into the project as
+     `<name>.kicad_dru` and raises the board's own minimums to its
+     board-wide ones, so the via check below and the DRC hold the board to
+     what the fab can make. Sierra's Web PCB wants a 6 mil (0.1524 mm) ring,
+     so the workcenter's 0.6/0.3 mm via does not do (0.65/0.3 does), 5 mil
+     legend text (`d.text(..., thickness=0.13)`), and 13 mil from every
+     hole to inner-layer copper.
    - Via sizes (`via_size`, `via_drill`, each net class's `via` and
      `via_drill`, any hand via) must meet the board's rules: a 0.3 mm hole,
-     a 0.5 mm via, a 0.1 mm ring unless `d.rules` lowers them.
+     a 0.5 mm via, a 0.1 mm ring unless `d.rules` lowers them or the fab
+     raises them.
      `workcenter design` lists every size the rules refuse and exits 1,
      before routing (P3 step 5, M46).
    - `d.model(ref, "${KIPRJMOD}/models/x.wrl")` gives a part a 3D body for the

@@ -1,0 +1,41 @@
+(version 1)
+# Sierra Circuits (Protoexpress) "Web PCB", the online order ("Standard PCBs", IPC-6012 Class 2).
+# Limits from "Online PCB Fab Capabilities", https://www.protoexpress.com/products/online-pcb-manufacturing/
+# and https://www.protoexpress.com/kb/web-pcb-specs/, read 2026-10-29. Where the two pages disagree the
+# stricter number is used. The workcenter copies this file into a project as <name>.kicad_dru when its
+# design file sets `fab = "sierra-circuits-web"`, and `workcenter drc --fab sierra-circuits-web` lays it
+# over any project's own rules. rules/README.md lists what Sierra publishes that KiCad cannot check here.
+
+# "Minimum Trace and Space: 4 mil (0.004 in/0.1016 mm)"
+(rule "sierra-web: trace width 4 mil"
+	(constraint track_width (min 0.1016mm))
+	(severity error))
+
+# "Minimum Air Gap: 4 mil (0.004 in/0.1016 mm) (between copper features)"
+(rule "sierra-web: copper air gap 4 mil"
+	(constraint clearance (min 0.1016mm))
+	(severity error))
+
+# "Minimum Finished Hole Size: 6 mil (0.006 in/0.1524 mm)"
+(rule "sierra-web: finished hole 6 mil"
+	(constraint hole_size (min 0.1524mm))
+	(severity error))
+
+# "Minimum Width of Annular Rings: 6 mil (0.006 in/0.1524 mm)" (the knowledge base's "preferred" 5 mil is
+# looser; 6 mil is the order page's limit)
+(rule "sierra-web: annular ring 6 mil"
+	(constraint annular_width (min 0.1524mm))
+	(severity error))
+
+# "Minimum Inner Layer Drill-to-Copper Spacing 13 mil (0.013 in/0.3302 mm) (for plated and non-plated holes)"
+(rule "sierra-web: inner drill to copper 13 mil"
+	(layer inner)
+	(constraint hole_clearance (min 0.3302mm))
+	(severity error))
+
+# "Silkscreen/Legend Minimum Width: 5 mil (0.005 in/0.127 mm) on both sides". KiCad checks the stroke
+# of text here; the width of silkscreen lines and arcs has no rule (see rules/README.md).
+(rule "sierra-web: legend text stroke 5 mil"
+	(condition "A.Layer == 'F.Silkscreen' || A.Layer == 'B.Silkscreen'")
+	(constraint text_thickness (min 0.127mm))
+	(severity error))

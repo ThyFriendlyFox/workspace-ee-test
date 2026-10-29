@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 
 ## [Unreleased]
 ### Added
+- Fabrication house rule sets in `rules/` (KiCad `.kicad_dru`), the first Sierra Circuits' Web PCB (`sierra-circuits-web`: 4 mil trace and gap, 6 mil hole and ring, 13 mil inner drill to copper, 5 mil legend text). `workcenter drc --fab NAME` and `gates --fab NAME` check a project against one on a copy; `kicadgen.Design.fab` writes it into the project as `<name>.kicad_dru` and raises the board's own minimums to its board-wide ones, so the via check refuses a via the fab would. Fixture `fail-fab-sierra`.
 - kistack (American Embedded's KiCad agent skills) vendored at `641ade9` in `third_party/kistack/`, without its logo; the `kistack` skill names which of its skills to read at which step and where this workcenter's rules override it (no getting round bot protection, the design file is the source of truth, FreeRouting routes, the gates decide done).
 - `workcenter placement <check> <board> [args]`: kistack's layout-placement checks (`pin_sides`, `placement_audit`, `route_check`, `local_search`, `group_search`) on a board file, headless. `tools/kistack_board.py` answers kistack's IPC reader from the file with pcbnew, since KiCad 10.0 has no headless API server. `move` is refused.
 - The venv gets shapely, numpy and pygerber (kistack's placement checks and Gerber review).
