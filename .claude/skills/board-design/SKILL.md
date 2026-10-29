@@ -89,6 +89,13 @@ project and routes it with FreeRouting. No GUI at any step.
      as `"Name:Footprint"`. Read it with
      `python3 tools/kicadgen.py footprint --lib Name=path Name:Footprint`
      before placing; the generated project gets an `fp-lib-table` for it.
+   - A symbol the library lacks, or draws only in several units (a dual
+     MOSFET: the generator places one unit per part), gets a project symbol:
+     a `.kicad_sym` file in the project, named in
+     `d.symbol_dirs = {"Name": path}` and used as `"Name:Symbol"`, one unit
+     with every pin. Read it with
+     `python3 tools/kicadgen.py pins --lib Name=path Name:Symbol`; the
+     schematic embeds it and the project gets a `sym-lib-table`.
    - `d.keepout(d.circle(cx, cy, r), layers=("F.Cu",), name="collar")` keeps
      tracks and vias out of an area (under grounded metal, a mounting
      screw, an antenna). KiCad gets a rule area, the router a keepout, and

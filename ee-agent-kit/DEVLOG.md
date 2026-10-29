@@ -41,6 +41,23 @@ Evidence: <commit / tag / gate run / screenshot>
 
 <!-- Entries below, newest first. -->
 
+## 2026-10-28 — A cell that was never wired in
+
+The user asked why the Last Hit's battery floated over the board, then
+noticed that it had a contact at each end and nothing joined either one.
+They were right twice over. When v0.6 traded a pouch cell for a 10440, the
+pouch's protection circuit and its plug went with it: the notes still said
+the cell protected itself, but the cell chosen is sold unprotected, and its
+contacts were a pad for a spring nobody picked and a lead nobody drew. P20
+only asked for the old part's ratings, so this became M56 and P20 now asks
+what the old part did as well. The fix needs a dual switch whose drains are
+joined inside the package, which KiCad's library draws only as two separate
+symbols; projects can now bring their own symbol library, the way they
+already bring their own footprints.
+
+Evidence: `make verify` green on the branch; the project-symbol test runs
+ERC on a schematic that uses one.
+
 ## 2026-10-27 — A parts list you can order from
 
 The user asked for every prototype's parts sourced from Digi-Key with the

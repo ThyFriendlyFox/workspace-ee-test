@@ -595,6 +595,43 @@ def test_project_footprint_library_is_loaded_and_tabled(tmp_path):
 
 
 @needs_libs
+@needs_kicad
+def test_project_symbol_library_is_loaded_embedded_and_tabled(tmp_path):
+    """A part the KiCad library lacks, or draws only in several units, comes from the project's own
+    `.kicad_sym` file. Here KiCad's resistor, renamed, stands in for it: the schematic embeds it under
+    the project's library name, the project gets a sym-lib-table, and ERC reads it like any other."""
+    device = kicadgen.parse(LIBS.read_text(encoding="utf-8"))
+    res = next(s for s in kicadgen.children(device, "symbol") if kicadgen.atoms(s)[0] == "R")
+    for unit in kicadgen.children(res, "symbol"):
+        unit[1] = kicadgen.Q("Res" + kicadgen.atoms(unit)[0][1:])  # R_0_1 -> Res_0_1
+    res[1] = kicadgen.Q("Res")
+    lib = tmp_path / "sym" / "Mine.kicad_sym"
+    lib.parent.mkdir()
+    lib.write_text(kicadgen.dumps(["kicad_symbol_lib", ["version", "20241209"], ["generator", "test"], res]))
+    d = divider()
+    d.symbol_dirs = {"Mine": lib}
+    assert sorted(p.number for p in d.symbol("Mine:Res").pins) == ["1", "2"]
+    d.add(
+        "R3",
+        "Mine:Res",
+        "22k",
+        "Resistor_SMD:R_0603_1608Metric",
+        sch_at=(86.36, 58.42),
+        pcb_at=(106.0, 108.8),
+        nets={"1": "OUT", "2": "GND"},
+    )
+    out = tmp_path / "proj"
+    d.write(out)
+    table = (out / "sym-lib-table").read_text()
+    assert table.startswith("(sym_lib_table") and '(name "Mine")' in table and "Mine.kicad_sym" in table
+    sch = (out / "gen_divider.kicad_sch").read_text()
+    assert '(symbol "Mine:Res"' in sch and '(lib_id "Mine:Res")' in sch
+    assert kicadgen.main(["pins", "--lib", f"Mine={lib}", "Mine:Res"]) == 0
+    code, records = run_cli("erc", out, "--out", out / "build", "--strict")
+    assert code == 0, records
+
+
+@needs_libs
 def test_stadium_outline_drops_the_end_lines_and_shared_points():
     d = divider()  # 12 x 10 mm
     d.corner_radius = 5.0

@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 
 ## [Unreleased]
 ### Added
+- `kicadgen`: project symbol libraries (`Design.symbol_dirs`, a `sym-lib-table` in the generated project, `pins --lib NAME=FILE`), for a part the KiCad library lacks or draws only in several units, such as a dual common-drain MOSFET.
 - `workcenter procure <project> --parts FILE --boards 1,10`: prices the schematic's BOM from parts files and writes `procure/bom.csv`, `parts.csv` and `parts.md` with the cheapest order per line and totals per supplier; fails on a line with no part or no price, `--strict` also on a line short of stock or a price older than 90 days. The `procurement` skill and P25 say how a parts file is filled (M54, M55).
 - `kicadgen`: wired schematics (`Design.sch_wires`): a grid router (`SchRouter`) draws each net's wires round the parts, with junctions at tees, power symbols pointing away from their pins, and each net's name on its wire; `sch_rot` turns a symbol, `sch_label_nets` keeps labels for chosen nets, `sheet` picks the paper. Off by default, so existing schematics regenerate byte for byte (M51, P24).
 - `workcenter render` names every part the 3D views draw without a body; `render --strict` fails on one (M52).
@@ -44,6 +45,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `docs/CONFIGURATION.md` names the FreeRouting pin that `install.sh` has carried since the 1.9.0 pin (M21).
 - `ee-agent-kit/MISTAKES.md` (every mistake, its cost, its process) and `ee-agent-kit/PROCESSES.md` (binding checklists P1 to P21); `make verify` checks that each mistake names an existing process and each process has a "Done when" line.
 ### Changed
+- `PROCESSES.md` P20 (swapping a part) step 3: list what the old part did besides its ratings (protection, how it was held and connected) and name the part that does each now (M56).
 - `install.sh` prints apt progress and runs it non-interactively; the KiCad download from the PPA is slow on GitHub runners and a silent step was cancelled as hung.
 - `workcenter render` leaves the fabrication layer out of the 2D top image.
 - `merge_ses` drops the router's echoes of fixed wires and splits a track where the router joined onto it.

@@ -9,9 +9,13 @@ router's session file back into the board. Standard library only.
     python3 tools/kicadgen.py pins Device:R MCU_ST_STM32G0:STM32G031F8Px
     python3 tools/kicadgen.py footprint Package_SO:TSSOP-20_4.4x6.5mm_P0.65mm
     python3 tools/kicadgen.py footprint --lib LastHit=footprints/LastHit.pretty LastHit:Connector_510
+    python3 tools/kicadgen.py pins --lib LastHit=symbols/LastHit.kicad_sym LastHit:FDMB2307NZ
 
 A project keeps its own footprints in a `.pretty` folder and names it in
 `Design.footprint_dirs`; the generated project gets an `fp-lib-table` for it.
+Its own symbols go in a `.kicad_sym` file named in `Design.symbol_dirs`, for
+a part the KiCad library lacks or draws only in several units; the project
+gets a `sym-lib-table` for it.
 
 Coordinates are millimetres. Schematic y grows downward (KiCad); symbol
 library y grows upward and is flipped on placement. Board rotation keeps
@@ -257,9 +261,10 @@ def _flatten(lib_node: Node, name: str) -> Node:
     return merged
 
 
-def load_symbol(lib_id: str) -> Symbol:
+def load_symbol(lib_id: str, dirs: dict[str, Path] | None = None) -> Symbol:
+    """A symbol by `Lib:Name`, from the file `dirs[Lib]` when the project names that library, else KiCad's."""
     lib, name = lib_id.split(":", 1)
-    lib_node = _load_lib(SYMBOL_DIR / f"{lib}.kicad_sym")
+    lib_node = _load_lib(Path(dirs[lib]) if dirs and lib in dirs else SYMBOL_DIR / f"{lib}.kicad_sym")
     node = _flatten(lib_node, name)
     _strip_tokens(node, DROP_SYMBOL_TOKENS)
     node[1] = Q(lib_id)
@@ -732,6 +737,7 @@ class Design:
     footprint_dirs: dict[str, Path] = field(
         default_factory=dict
     )  # project footprint libraries: name -> .pretty
+    symbol_dirs: dict[str, Path] = field(default_factory=dict)  # project symbol libraries: name -> .kicad_sym
     via_size: float = 0.6
     via_drill: float = 0.3
     # Copper layers, an even count: F.Cu, In1.Cu .. In(n-2).Cu, B.Cu. Set it first: track, zone and
@@ -766,7 +772,7 @@ class Design:
 
     def symbol(self, lib_id: str) -> Symbol:
         if lib_id not in self._symcache:
-            self._symcache[lib_id] = load_symbol(lib_id)
+            self._symcache[lib_id] = load_symbol(lib_id, self.symbol_dirs)
         return self._symcache[lib_id]
 
     def fp(self, lib_id: str) -> Footprint:
@@ -2879,17 +2885,24 @@ class Design:
         }
         for p, text in files.items():
             p.write_text(text, encoding="utf-8")
-        if self.footprint_dirs:  # so KiCad finds the project's own footprints when the board is opened
+        # So KiCad finds the project's own footprints and symbols when the files are opened; both are
+        # embedded in the board and the schematic as well.
+        for libs, name, head in (
+            (self.footprint_dirs, "fp-lib-table", "fp_lib_table"),
+            (self.symbol_dirs, "sym-lib-table", "sym_lib_table"),
+        ):
+            if not libs:
+                continue
             rows = []
-            for lib, d in sorted(self.footprint_dirs.items()):
+            for lib, d in sorted(libs.items()):
                 d = Path(d).resolve()
                 try:
                     uri = "${KIPRJMOD}/" + d.relative_to(out_dir.resolve()).as_posix()
                 except ValueError:
                     uri = d.as_posix()
                 rows.append(f'  (lib (name "{lib}")(type "KiCad")(uri "{uri}")(options "")(descr ""))')
-            table = out_dir / "fp-lib-table"
-            table.write_text("(fp_lib_table\n  (version 7)\n" + "\n".join(rows) + "\n)\n", encoding="utf-8")
+            table = out_dir / name
+            table.write_text(f"({head}\n  (version 7)\n" + "\n".join(rows) + "\n)\n", encoding="utf-8")
             files[table] = table.read_text(encoding="utf-8")
         if self.zones:
             pcb = out_dir / f"{self.name}.kicad_pcb"
@@ -3236,10 +3249,25 @@ def route(
 # ------------------------------------------------------------------- cli
 
 
+def _libs_and_ids(args: list[str]) -> tuple[dict[str, Path], list[str]]:
+    """`--lib NAME=PATH` options (a project library) and the `Lib:Name` ids among them."""
+    dirs: dict[str, Path] = {}
+    ids: list[str] = []
+    rest = iter(args)
+    for a in rest:
+        if a == "--lib":
+            name, _, d = next(rest, "").partition("=")
+            dirs[name] = Path(d)
+        else:
+            ids.append(a)
+    return dirs, ids
+
+
 def main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[0] == "pins":
-        for lib_id in argv[1:]:
-            sym = load_symbol(lib_id)
+        dirs, ids = _libs_and_ids(argv[1:])  # --lib NAME=FILE: a project symbol library
+        for lib_id in ids:
+            sym = load_symbol(lib_id, dirs)
             print(f"== {sym.lib_id}  ({len(sym.pins)} pins)")
             for p in sorted(sym.pins, key=lambda p: (len(p.number), p.number)):
                 print(
@@ -3247,15 +3275,7 @@ def main(argv: list[str]) -> int:
                 )
         return 0
     if len(argv) >= 2 and argv[0] == "footprint":
-        dirs: dict[str, Path] = {}
-        ids: list[str] = []
-        rest = iter(argv[1:])
-        for a in rest:
-            if a == "--lib":  # --lib NAME=DIR: a project footprint library
-                name, _, d = next(rest, "").partition("=")
-                dirs[name] = Path(d)
-            else:
-                ids.append(a)
+        dirs, ids = _libs_and_ids(argv[1:])  # --lib NAME=DIR: a project footprint library
         for lib_id in ids:
             fp = load_footprint(lib_id, dirs)
             print(f"== {fp.lib_id}  courtyard={fp.courtyard}")
