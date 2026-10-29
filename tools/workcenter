@@ -1202,6 +1202,64 @@ def cmd_design(args) -> int:
     return code
 
 
+KISTACK_DIR = Path(os.environ.get("KISTACK_DIR", SRC_DIR / "third_party" / "kistack"))
+# kistack's layout-placement checks that only read the board. move.py edits a board KiCad has open;
+# a generated board changes in its design file instead.
+PLACEMENT_CHECKS = ("pin_sides", "placement_audit", "route_check", "local_search", "group_search")
+# Run one check with tools/kistack_board.py standing in for kistack's IPC reader.
+PLACEMENT_RUNNER = """
+import runpy, sys
+sys.path.insert(0, sys.argv[1])
+import kistack_board
+sys.modules["ipc_board"] = kistack_board
+script = sys.argv[2]
+sys.argv = [script, *sys.argv[3:]]
+runpy.run_path(script, run_name="__main__")
+"""
+# KiCad's Python module writes these to stderr on every load; they say nothing about the board.
+KICAD_NOISE = re.compile(r"Debug: Adding duplicate image handler|property\.h\(\d+\): assert")
+
+
+def venv_python() -> str:
+    """The workcenter venv's Python (KiCad's pcbnew module, shapely), else this one."""
+    py = WC_ROOT / "venv" / "bin" / "python"
+    return str(py) if py.exists() else sys.executable
+
+
+def cmd_placement(args) -> int:
+    """Run one of kistack's layout-placement checks on a board file, headless."""
+    name = args.check.removesuffix(".py")
+    if name == "move":
+        print(
+            "placement: kistack's move.py edits a board that KiCad has open. A generated board changes in "
+            "its design file: put the new position in design.py and run `workcenter design` again.",
+            file=sys.stderr,
+        )
+        return EXIT_SKIP
+    if name not in PLACEMENT_CHECKS:
+        raise SystemExit(f"placement: {args.check!r} is not one of {', '.join(PLACEMENT_CHECKS)}")
+    script = KISTACK_DIR / "skills" / "layout-placement" / "scripts" / f"{name}.py"
+    if not script.is_file():
+        print(f"placement: {script} is missing (KISTACK_DIR={KISTACK_DIR})", file=sys.stderr)
+        return EXIT_SKIP
+    project = find_project(args.board)
+    if project.pcb is None:
+        raise SystemExit(f"placement: {project.dir} has no .kicad_pcb")
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run(
+        [venv_python(), "-s", "-c", PLACEMENT_RUNNER, str(SRC_DIR / "tools"), str(script), str(project.pcb)]
+        + list(args.args),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write("".join(ln for ln in proc.stderr.splitlines(True) if not KICAD_NOISE.search(ln)))
+    if "No module named 'shapely'" in proc.stderr or "No module named 'pcbnew'" in proc.stderr:
+        return EXIT_SKIP
+    return EXIT_PASS if proc.returncode == 0 else EXIT_FAIL
+
+
 USER_SETTINGS = Path.home() / ".claude" / "settings.json"
 
 
@@ -1245,6 +1303,11 @@ def cmd_doctor(args) -> int:
             "path": str(SRC_DIR / "WORKCENTER.md"),
         },
         "no-cd hook": {"required": False, "ok": no_cd_hook_installed(), "path": str(USER_SETTINGS)},
+        "kistack": {
+            "required": False,
+            "ok": (KISTACK_DIR / "skills" / "layout-placement" / "scripts").is_dir(),
+            "path": str(KISTACK_DIR),
+        },
     }
     missing_required = [k for k, v in checks.items() if v["required"] and not v["ok"]]
     degraded = [k for k, v in checks.items() if not v["required"] and not v["ok"]]
@@ -1395,10 +1458,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--rounds", type=int, default=4, help="route again with a via reserved beside each pad a pour lost"
     )
+    p = sub.add_parser(
+        "placement",
+        help="run a kistack layout-placement check on a board file: " + ", ".join(PLACEMENT_CHECKS),
+    )
+    p.add_argument("check", help=f"one of {', '.join(PLACEMENT_CHECKS)}")
+    p.add_argument("board", help="project directory or .kicad_pcb")
+    p.add_argument("args", nargs=argparse.REMAINDER, help="the check's own arguments, e.g. U1 or --ic U1")
 
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return cmd_doctor(args)
+    if args.command == "placement":
+        return cmd_placement(args)
     if args.command == "design":
         return cmd_design(args)
     if args.command == "render":

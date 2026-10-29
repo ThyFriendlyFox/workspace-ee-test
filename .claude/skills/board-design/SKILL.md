@@ -156,7 +156,10 @@ project and routes it with FreeRouting. No GUI at any step.
 4. **Generate and check.** `workcenter design design.py` then
    `workcenter erc .` and `workcenter drc .`. Fix every error except
    unconnected items before routing. Courtyard overlaps and pad clearance
-   are placement mistakes the router cannot fix.
+   are placement mistakes the router cannot fix. Then, for each IC whose
+   parts moved, `workcenter placement placement_audit . --ic U1` and
+   `workcenter placement route_check . --ic U1` (kistack's checks; the
+   `kistack` skill and its layout-placement guide say what to fix first).
 5. **Route.** `workcenter design design.py --route --passes 60`. The
    command prints what the router did and which ground pads ended up on an
    island; `workcenter drc .` lists what stayed unrouted. FreeRouting

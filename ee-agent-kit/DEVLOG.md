@@ -41,6 +41,24 @@ Evidence: <commit / tag / gate run / screenshot>
 
 <!-- Entries below, newest first. -->
 
+## 2026-10-29 — kistack joins the workcenter
+
+The user asked for kistack in the workflow. It is a set of agent skills for
+KiCad written by hand at American Embedded: how to wire a schematic, place
+parts, lay out, choose parts, make footprints and symbols, export, look at
+Gerbers and panelize. Every one was read before it went in, because agents
+follow these files. Most of it applies here as written. Three things do not:
+it tells an agent to find ways round a site's bot protection, which this
+workcenter refuses; it edits the open board in KiCad, where our boards come
+from a design file; and its placement checks need a KiCad server, which
+KiCad 10's command line cannot run. So the skills sit unchanged under
+`third_party/`, a workcenter skill says which to read when and where our
+rules win, and a small reader answers the placement checks from the board
+file instead of a server. On kistack's own test board they give the answers
+its own tests expect.
+
+Evidence: `make verify` green on the branch; `tests/test_placement.py`.
+
 ## 2026-10-28 — A cell that was never wired in
 
 The user asked why the Last Hit's battery floated over the board, then

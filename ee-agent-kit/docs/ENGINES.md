@@ -81,6 +81,31 @@ turning GIF of `workcenter render --views spin`, with a palette made from
 the frames themselves. Absent, the GIF is skipped with the reason; nothing
 else needs it, and the CLI stays standard-library Python.
 
+## kistack placement checks
+
+Not an engine of its own: kistack's layout-placement scripts
+(`third_party/kistack/skills/layout-placement/scripts`), run by
+`workcenter placement` in the venv with shapely and numpy. kistack reads the
+board through the IPC API, which needs a KiCad server with the board open;
+KiCad 10.0's `kicad-cli` has no API server, so `tools/kistack_board.py`
+answers the same `ipc_board.load()` from the board file with pcbnew: pads as
+KiCad's own polygons, courtyards, the outline, netted copper shapes, and the
+net classes and clearance overrides kistack's rules module asks for. The
+scripts themselves are unchanged. Absent shapely or pcbnew, the command
+skips (exit 2) and says which.
+
+```sh
+KISTACK_DIR=<checkout>/third_party/kistack   # default
+```
+
+## pygerber
+
+`pygerber raster-2d <layer> -o <png> -d 1000 -s copper_alpha` draws one
+Gerber layer as an image, for kistack's Gerber review. Release 2.4.3, from
+PyPI into the venv. kistack's skill names the 3.x command
+(`pygerber gerber convert png`); 2.4.3 is the newest stable release and has
+`raster-2d` instead. No gate runs it yet.
+
 ## kipy (planned)
 
 `kicad-python`, the official IPC API client, is installed in the venv

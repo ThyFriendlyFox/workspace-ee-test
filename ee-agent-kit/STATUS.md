@@ -13,7 +13,8 @@ behavior change. The weekly cycle (WEEKLY.md step 5) refreshes it.
 | Autoroute, hand-drawn boards | 🚧 | Produces a session from a KiCad-exported DSN; import is manual. ROADMAP item 1. |
 | `workcenter render` | ✅ | Schematic, board top and bottom, 3D top, bottom and isometric images with part bodies when `kicad-packages3d` is installed, plus the project's own `wrlgen` bodies; every layer with something on it, one PNG each, and an overview sheet; on request a GIF of the 3D board turning round (FFmpeg). PNG through librsvg. `tests/test_gates.py` (21 tests): layers drawn and empty ones skipped on the fixture, the view list, the GIF's frames and loop, the skip without FFmpeg, the parts drawn without a 3D body and `--strict` failing on one. |
 | `workcenter procure` | ✅ | A schematic's BOM priced from parts files: the cheapest order per line at each unit count, totals per supplier, lines not priced, short of stock or checked too long ago. `tests/test_gates.py`: the fixture priced to the cent, the failures and the skip. |
-| Skills | ✅ | 7 skills with frontmatter, checked by `make verify`. |
+| Skills | ✅ | 8 skills with frontmatter, checked by `make verify`; `kistack` routes to 11 vendored kistack skills. |
+| `workcenter placement` (kistack) | ✅ | `tests/test_placement.py` (6 tests): kistack's checks on its own synthetic board read through the pcbnew stand-in, with the answers kistack's tests expect (pin 1 VDD, a decoupler with its ground pad toward the pin, every local link routed together); `move` and unknown checks refused. |
 | Mistake log and processes | ✅ | `MISTAKES.md` M1 to M56, `PROCESSES.md` P1 to P25; `make verify` checks every entry names an existing process and every process has a "Done when" line. |
 | Cloud environment | 🚧 | `environment/setup.sh` written; not yet set on an environment by a human. |
 | Docker image | 🚧 | `Dockerfile` written; `release.yml` builds it on the first tag. |

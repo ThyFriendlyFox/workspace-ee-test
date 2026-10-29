@@ -20,6 +20,7 @@ passed every gate. "Done" means `workcenter gates <project>` prints GREEN.
 | FFmpeg | 6.1 | `ffmpeg` (the turning GIF of `workcenter render --views spin`) | `install.sh` (Ubuntu 24.04 archive) |
 | kicadgen | this repo | `workcenter design <design.py> [--route]`; `python3 tools/kicadgen.py pins|footprint` | `install.sh` (part of the checkout) |
 | workcenter CLI | this repo | `workcenter` | `install.sh` (symlink to `tools/workcenter`) |
+| kistack | `641ade9` | `.claude/skills/kistack/SKILL.md` routes to `third_party/kistack/skills/`; `workcenter placement <check> <board> [args]` runs its placement checks | the checkout (vendored, `third_party/kistack/VENDORED.md`); shapely, numpy and pygerber by `install.sh` (PyPI) |
 
 ## Skills
 
@@ -32,6 +33,7 @@ passed every gate. "Done" means `workcenter gates <project>` prints GREEN.
 | `simulate` | A circuit must meet a measurable spec before layout. |
 | `blog-post` | A human asks for a public write-up of recent work. |
 | `procurement` | A human asks what a board costs, for its parts list, or to order its parts. |
+| `kistack` | Placing parts, reviewing a schematic, a layout or the Gerbers, choosing a part's derating, a footprint or symbol, or a panel: it names the kistack skill for the step, and where this workcenter's rules win. |
 
 ## Gates
 
@@ -64,6 +66,14 @@ stock, date and URL per part, items off the board too) and writes
 the cheapest order per line and totals per supplier for each `--boards`
 count. It fails on a line with no part or no price; `--strict` also on a
 line short of stock or a price older than 90 days (`PROCESSES.md` P25).
+
+Not a gate: `workcenter placement <check> <board> [args]` runs one of
+kistack's layout-placement checks on the board file (`pin_sides`,
+`placement_audit`, `route_check`, `local_search`, `group_search`) with KiCad's
+Python module reading the board, where kistack itself needs a KiCad server.
+Run `placement_audit` and `route_check` on each IC whose parts moved, before
+routing (the `kistack` skill). `move` is refused: a generated board changes in
+its design file.
 
 A project may add gates. It may not remove these.
 
