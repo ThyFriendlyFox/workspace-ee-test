@@ -45,6 +45,12 @@ passed every gate. "Done" means `workcenter gates <project>` prints GREEN.
 | EXPORT | `workcenter export <project>` | gerbers, drill, BOM, schematic PDF produced | hand-off to fabrication |
 | ALL | `workcenter gates <project>` | the 4 gates above in order, none red | a board is called done |
 
+`workcenter design` also lists every control input that can float while the
+MCU is in reset (a gate, a logic input, a switch or an I2C line that no output
+drives and no resistor holds), as `pull:` lines; a design that sets
+`check_pulls` fails on one, and `defined_nets` names the nets held elsewhere
+with the reason (`PROCESSES.md` P16).
+
 A board made for a particular fab checks that fab's published limits in the
 DRC: `rules/` holds them as KiCad design rules (`sierra-circuits-web` for
 Sierra Circuits' Web PCB: 4 mil trace and gap, 6 mil hole and ring, 13 mil

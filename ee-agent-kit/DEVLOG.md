@@ -41,6 +41,22 @@ Evidence: <commit / tag / gate run / screenshot>
 
 <!-- Entries below, newest first. -->
 
+## 2026-10-29 — Every input held while the MCU sleeps in reset
+
+The user asked for pull-downs wherever a board needs one, suspecting one had
+been missed. An MCU pin is high-impedance from power-up until firmware sets
+it, so a MOSFET gate or an enable it drives floats for those milliseconds and
+can switch a heater on by itself. The new check reads the schematic's pin
+types: a net with a gate, a logic input, a switch or an I2C line, with no
+output on it and no resistor to a rail (or a gate to its own source), is
+reported. On Last Hit v0.11 it found three nets and no missed pull. The
+button relies on the MCU's internal pull-up, which the firmware sets. The
+display's I2C lines are pulled up on the display board. Every heater and
+protection gate was already held. A design names such nets with their reason
+and turns the check into a failure with `check_pulls`.
+
+Evidence: `make verify` green on the branch; `tests/test_pulls.py`.
+
 ## 2026-10-29 — The fab's own limits in the DRC
 
 The user asked for a DRC that says whether a board can be made, and chose
